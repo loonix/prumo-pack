@@ -1,0 +1,1 @@
+- `SEC-01` : **ACTIVA** : segunda redaccao

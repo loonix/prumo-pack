@@ -1,0 +1,2 @@
+- `SEC-01` : **ACTIVA** : provada
+- `SEC-02` : sem estado nenhum

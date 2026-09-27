@@ -1,0 +1,2 @@
+- `SEC-01` : **ACTIVA** : provada
+- `BIZ-02` : **REVOGADA 2026-09-18 (dona do negocio)** : regra morta
