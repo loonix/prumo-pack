@@ -1,0 +1,4 @@
+#!/bin/sh
+# Verificador de rastreabilidade do Prumo. Ver lib/prumo_trace.py.
+AQUI="$(cd "$(dirname "$0")" && pwd)"
+exec python3 "$AQUI/../lib/prumo_trace.py" "$@"
