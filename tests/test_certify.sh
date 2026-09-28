@@ -112,6 +112,12 @@ check_output "expect_visible_selector with an empty selector fails" 1 "expect_vi
 printf '{ "frontend": [ { "name": "x", "path": "/", "expect_text": ["a"], "expect_image_loaded": [] } ] }\n' >"$D/m.json"
 check_output "expect_image_loaded as an empty list fails" 1 "expect_image_loaded must be a non-empty list" \
   "$C" --base-url "$URL" --manifest "$D/m.json"
+printf '{ "frontend": [ { "name": "x", "path": "/" } ] }\n' >"$D/m.json"
+check_output "frontend check with no assertion at all fails" 1 "declares no assertion" \
+  "$C" --base-url "$URL" --manifest "$D/m.json"
+printf '{ "frontend": [ { "name": "x", "path": "/", "expect_text": [] } ] }\n' >"$D/m.json"
+check_output "expect_text as an empty list still fails" 1 "expect_text must be a non-empty list" \
+  "$C" --base-url "$URL" --manifest "$D/m.json"
 
 echo "rendered DOM, tool missing"
 check_output "frontend declared, node missing: SKIPPED counts as failure" 1 "SKIPPED" \
@@ -145,6 +151,8 @@ if node "$DOM" --probe "$M" >/dev/null 2>&1; then
     "$C" --base-url "$URL" --manifest "$M/frontend-absent-fail.json"
   check_output "selectors that exist and are visible pass" 0 "1 passed, 0 failed" \
     "$C" --base-url "$URL" --manifest "$M/frontend-selector-pass.json"
+  check_output "a check asserting only absences passes, expect_text is optional" 0 "1 passed, 0 failed" \
+    "$C" --base-url "$URL" --manifest "$M/frontend-absent-only.json"
   check_output "hidden, empty, missing or invalid selectors fail, each named" 1 \
     'selector not visible: #promo (display:none on it or an ancestor), #ghost (visibility:hidden), #empty (zero-size box), #nowhere (no element matches), p > (invalid selector)' \
     "$C" --base-url "$URL" --manifest "$M/frontend-selector-fail.json"

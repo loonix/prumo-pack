@@ -1,0 +1,6 @@
+{
+  "frontend": [
+    { "name": "home no longer shows the retired offer, nothing else asserted", "path": "/index.html",
+      "expect_absent": ["Sold out", "Hidden launch promo"] }
+  ]
+}
