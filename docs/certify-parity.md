@@ -4,23 +4,30 @@
 production today (three scripts plus a JSON list of requests). This note records
 what was ported, what was left out, and what was NOT verified.
 
-## Not run: parity against the live site
+## Parity against the live site, read-only layers (28 Sep 2026)
 
-The original certifier and `prumo-certify` were **not** run side by side against the
-live site the original certifies. Doing so sends real requests to production,
-including write requests (invalid on purpose, but writes all the same). That call
-belongs to the human who owns that deployment, not to the agent that wrote the port.
+Both certifiers ran against the live site they certify, at the same commit of the
+project (`e0e0578`), with a `prumo-certify.json` generated from the original's request
+list. Only read-only layers ran: file parity and the rendered DOM. The backend layer
+sends write requests to production (invalid on purpose) and was not run; that call
+stays with the owner of the deployment.
 
-What was measured here is only the pack's own test suite (`tests/test_certify.sh`)
-against a local stdlib server (`tests/fixtures/certify/server.py`). Passing those
-tests says the port honours its own contract, not that it reaches the same verdict
-as the original on the same site.
+| Layer | Original | prumo-certify |
+|---|---|---|
+| File parity, private prefixes, floor of 40 | 69 checked, 0 failures | 69 checked, 0 failures |
+| Rendered DOM, 40 pages that declare visible text | pass | 40 passed |
+| Rendered DOM, 42 pages that declare only absences, selectors or images | pass | refused the manifest; after the fix, 42 passed |
+| 2 pages that click or resize before reading | pass | not expressible, left out |
+| 12 pages with pixel or size assertions | pass | text and selectors checked, pixel parts not ported |
 
-To close the gap, the owner of the deployment would:
+The refusal was a real divergence: `expect_text` was mandatory, so a page could not
+assert only that something is gone. Fixed by making every assertion list optional and
+refusing a page that declares none. Regression tests: "a check asserting only absences
+passes, expect_text is optional" and "frontend check with no assertion at all fails".
 
-1. write a `prumo-certify.json` that declares the same checks as the original;
-2. run both certifiers against the same base url at the same commit;
-3. compare verdicts check by check, and add a regression test for any divergence.
+After the fix the full manifest gives 151 declared, 151 passed (69 files, 82 pages).
+
+Still not verified: the backend layer side by side.
 
 ## What was ported
 
