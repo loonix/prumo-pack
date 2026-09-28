@@ -13,13 +13,12 @@
 #   github  create .github/workflows/prumo.yml
 #   none    scaffold .prumo/ and wire nothing (prints a warning)
 #
-# GitLab: an include of templates/ci/gitlab/prumo.yml is added, taken from the
-# project named by the CI/CD variable PRUMO_PACK_PROJECT (the path of the
-# GitLab project that hosts prumo-pack, set at project or group level: GitLab
-# does not expand variables declared in .gitlab-ci.yml inside include). An
-# existing block list include gets one more item; any other include form is a
-# refusal with the snippet to add by hand.
-# GitHub: .github/workflows/prumo.yml calls the reusable workflow of the pack.
+# GitLab: a remote include of templates/ci/gitlab/prumo.yml at the v0 tag of
+# the pack is added, the form documented in that template. An existing block
+# list include gets one more item; any other include form is a refusal with the
+# snippet to add by hand.
+# GitHub: templates/ci/github/prumo.yml is copied to .github/workflows/prumo.yml;
+# it calls the reusable workflow of the pack.
 #
 # Checks run before any write: a refusal leaves the repository untouched.
 #
@@ -30,7 +29,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 TEMPLATES="$HERE/../templates/.prumo"
 GITLAB_TEMPLATE="templates/ci/gitlab/prumo.yml"
-GITHUB_REUSABLE="loonix/prumo-pack/.github/workflows/prumo.yml@v0"
+GITHUB_TEMPLATE="$HERE/../templates/ci/github/prumo.yml"
 GITHUB_WORKFLOW=".github/workflows/prumo.yml"
 
 usage() {
@@ -106,14 +105,10 @@ import sys
 
 mode, path, template = sys.argv[1], sys.argv[2], sys.argv[3]
 COMMENT = [
-    "# Prumo gates from prumo-pack. PRUMO_PACK_PROJECT is the path of the GitLab",
-    "# project that hosts prumo-pack. Set it as a project or group CI/CD variable:",
-    "# variables declared in this file do not expand inside include.",
+    "# Prumo gates from prumo-pack, pinned to the v0 tag of the pack.",
 ]
 ITEM = [
-    "- project: '$PRUMO_PACK_PROJECT'",
-    "  ref: v0",
-    "  file: " + template,
+    "- remote: https://raw.githubusercontent.com/loonix/prumo-pack/v0/" + template,
 ]
 SNIPPET = "\n".join(COMMENT + ["include:"] + ["  " + l for l in ITEM]) + "\n"
 
@@ -210,16 +205,7 @@ if [ "$wire_github" = 1 ]; then
     report kept "$GITHUB_WORKFLOW"
   else
     mkdir -p "$(dirname "$wf")"
-    cat >"$wf" <<EOF
-# Prumo gates from prumo-pack, pinned to the v0 major tag of the pack.
-name: prumo
-on:
-  push:
-  pull_request:
-jobs:
-  prumo:
-    uses: $GITHUB_REUSABLE
-EOF
+    cp "$GITHUB_TEMPLATE" "$wf"
     report created "$GITHUB_WORKFLOW"
   fi
 fi
@@ -229,7 +215,7 @@ if [ "$force" = "none" ]; then
   echo "prumo-init: WARNING, --force-ci none: no CI wired. The gates bite only once CI runs them." >&2
 fi
 if [ "$gitlab_action" = create ] || [ "$gitlab_action" = append ] || [ "$gitlab_action" = insert ]; then
-  echo "next: set the CI/CD variable PRUMO_PACK_PROJECT to the GitLab path of prumo-pack."
+  echo "next: the include fetches prumo-pack from GitHub at tag v0; the runner must be able to read it."
 fi
 if [ "$created" -gt 0 ]; then
   echo "next: prumo-trace fails until a test is tagged with the id CORE-01 (or the rule is replaced),"
