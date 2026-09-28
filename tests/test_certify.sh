@@ -101,6 +101,12 @@ check "base url that is not http(s) is a usage error" 2 \
   "$C" --base-url "ftp://example.com" --manifest "$M/backend-pass.json"
 check "unknown option is a usage error" 2 "$C" --base-url "$URL" --bogus
 
+echo "rendered DOM, manifest validation"
+D="$(tmpdir)"
+printf '{ "frontend": [ { "name": "x", "path": "/", "expect_text": ["a"], "expect_absent": "b" } ] }\n' >"$D/m.json"
+check_output "expect_absent that is not a list of strings fails" 1 "expect_absent must be a non-empty list" \
+  "$C" --base-url "$URL" --manifest "$D/m.json"
+
 echo "rendered DOM, tool missing"
 check_output "frontend declared, node missing: SKIPPED counts as failure" 1 "SKIPPED" \
   env PRUMO_CERTIFY_NODE="$NO_NODE" "$C" --base-url "$URL" --manifest "$M/frontend.json"
@@ -127,8 +133,13 @@ if node "$DOM" --probe "$M" >/dev/null 2>&1; then
     "$C" --base-url "$URL" --manifest "$M/frontend-hidden.json"
   check_output "a console error fails the page" 1 "console error: example failure on load" \
     "$C" --base-url "$URL" --manifest "$M/frontend-console-error.json"
+  check_output "texts absent from the visible text pass (CSS hidden counts as absent)" 0 "1 passed, 0 failed" \
+    "$C" --base-url "$URL" --manifest "$M/frontend-absent-pass.json"
+  check_output "a text that must be absent but is visible fails, case-insensitive" 1 'still visible: "plans START at"' \
+    "$C" --base-url "$URL" --manifest "$M/frontend-absent-fail.json"
 else
-  for n in "visible text passes" "hidden text fails" "console error fails"; do
+  for n in "visible text passes" "hidden text fails" "console error fails" \
+    "absent texts pass" "visible absent text fails"; do
     skip "$n" "node with playwright and chromium not available (set NODE_PATH)"
   done
 fi

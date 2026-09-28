@@ -1,0 +1,7 @@
+{
+  "frontend": [
+    { "name": "home no longer shows the retired offer", "path": "/index.html",
+      "expect_text": ["Plans start at 10 per month"],
+      "expect_absent": ["Sold out", "Hidden launch promo"] }
+  ]
+}

@@ -7,7 +7,8 @@ Three layers, all measured against the base url, none against the source tree:
                 serves (sha256 of the local file vs GET of its url);
   2. backend    live HTTP requests answer with the declared status and body;
   3. frontend   each page, rendered in a real browser, shows the declared text
-                in its visible innerText and logs no console error.
+                in its visible innerText, does not show the texts declared
+                absent (case-insensitive) and logs no console error.
 
 Origin: a change was reported done after measuring the file in the repository,
 while production still served the old copy. Two true measurements, neither of
@@ -24,7 +25,8 @@ Manifest (prumo-certify.json by default), English keys, every layer optional:
                    "headers": {"Authorization": "Bearer ${API_TOKEN}"},
                    "body": {...}, "expect_status": 400,
                    "expect_body_contains": "..."} ],
-    "frontend": [ {"name": "...", "path": "/", "expect_text": ["..."]} ]
+    "frontend": [ {"name": "...", "path": "/", "expect_text": ["..."],
+                   "expect_absent": ["..."]} ]
   }
 
 Local paths are relative to the manifest. Keys starting with "_" are comments.
@@ -42,9 +44,9 @@ polluted. A write that should be refused and is accepted fails loudly, because a
 resource may now exist in production.
 
 Fails closed on itself: a missing, unparsable or empty manifest (zero checks),
-an unknown key, a local_dir with zero files (or fewer than its min_count), or a declared frontend layer whose
-browser tool is missing (SKIPPED) is a failure. A certifier that checked nothing
-cannot say OK.
+an unknown key, a local_dir with zero files (or fewer than its min_count), or a
+declared frontend layer whose browser tool is missing (SKIPPED) is a failure. A
+certifier that checked nothing cannot say OK.
 
 Usage: prumo-certify --base-url URL [--manifest FILE]
 Exit:  0 every declared check ran and passed, 1 failure or skipped check,
@@ -70,8 +72,11 @@ KEYS = {
                "min_count"}, set()),
     "backend": ({"name", "method", "path", "body", "headers", "expect_status",
                  "expect_body_contains"}, {"name", "method", "path", "expect_status"}),
-    "frontend": ({"name", "path", "expect_text"}, {"name", "path", "expect_text"}),
+    "frontend": ({"name", "path", "expect_text", "expect_absent"},
+                 {"name", "path", "expect_text"}),
 }
+# Frontend assertions, each a list of non-empty strings, passed to the DOM runner.
+FRONTEND_LISTS = ("expect_text", "expect_absent")
 ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
@@ -224,10 +229,11 @@ def validate_frontend(e, where, errors):
         errors.append("%s: name must be a non-empty string" % where)
     if "path" in e:
         check_url_path(e["path"], where, "path", errors)
-    t = e.get("expect_text")
-    if "expect_text" in e and (not isinstance(t, list) or not t
-                               or not all(isinstance(x, str) and x for x in t)):
-        errors.append("%s: expect_text must be a non-empty list of non-empty strings" % where)
+    for k in FRONTEND_LISTS:
+        t = e.get(k)
+        if k in e and (not isinstance(t, list) or not t
+                       or not all(isinstance(x, str) and x for x in t)):
+            errors.append("%s: %s must be a non-empty list of non-empty strings" % (where, k))
 
 
 # ---------------------------------------------------------------- http
@@ -365,8 +371,9 @@ def run_frontend(base_url, pages, manifest_dir, tally):
         reason = "node not found, the rendered DOM was not checked"
     else:
         job = {"base_url": base_url, "resolve_from": [manifest_dir, os.getcwd()],
-               "checks": [{"name": p["name"], "path": p["path"],
-                           "expect_text": p["expect_text"]} for p in pages]}
+               "checks": [dict({"name": p["name"], "path": p["path"]},
+                               **{k: p[k] for k in FRONTEND_LISTS if k in p})
+                          for p in pages]}
         try:
             proc = subprocess.run([node, DOM_RUNNER], input=json.dumps(job), text=True,
                                   capture_output=True, timeout=60 + 45 * len(pages))

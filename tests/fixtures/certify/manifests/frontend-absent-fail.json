@@ -1,0 +1,7 @@
+{
+  "frontend": [
+    { "name": "home no longer shows the price", "path": "/index.html",
+      "expect_text": ["Example site"],
+      "expect_absent": ["plans START at"] }
+  ]
+}
