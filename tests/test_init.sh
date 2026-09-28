@@ -89,7 +89,8 @@ D="$(repo gitlab)"
 check_output "GitLab repository is detected" 0 "updated .gitlab-ci.yml" "$I" "$D"
 check "GitLab scaffold is complete" 0 scaffold_complete "$D"
 check "include of the GitLab template appended once" 0 count_is 1 "$GITLAB_FILE" "$D/.gitlab-ci.yml"
-check "include uses the documented project variable" 0 grep -qF 'PRUMO_PACK_PROJECT' "$D/.gitlab-ci.yml"
+check "include is the remote documented in the GitLab template" 0 \
+  grep -qF "remote: https://raw.githubusercontent.com/loonix/prumo-pack/v0/$GITLAB_FILE" "$D/.gitlab-ci.yml"
 check "existing GitLab content kept on line 1" 0 test "$(head -1 "$D/.gitlab-ci.yml")" = "stages: [test]"
 check_output "second GitLab run is a no-op" 0 "0 created, 0 updated" second_run_is_noop "$D"
 check "include not duplicated by the second run" 0 count_is 1 "$GITLAB_FILE" "$D/.gitlab-ci.yml"
@@ -135,6 +136,8 @@ D="$(repo github)"
 check_output "GitHub repository is detected" 0 "created .github/workflows/prumo.yml" "$I" "$D"
 check "GitHub scaffold is complete" 0 scaffold_complete "$D"
 check "workflow calls the reusable workflow" 0 grep -qF "uses: $GITHUB_USES" "$D/.github/workflows/prumo.yml"
+check "workflow is the GitHub consumer template byte for byte" 0 \
+  cmp "$D/.github/workflows/prumo.yml" "$PACK_ROOT/templates/ci/github/prumo.yml"
 check_output "second GitHub run is a no-op" 0 "0 created, 0 updated" second_run_is_noop "$D"
 
 D="$(repo github)"
