@@ -1,0 +1,6 @@
+# Project specific degradation phrases for checks/fail-closed.sh, one extended
+# regex per line, matched case insensitively. A line of production code that
+# calls a warning and matches one of these fails the build: a missing
+# protection must refuse to start, not log and carry on.
+# The built-in list already covers phrases such as "running without" and
+# "degraded mode". Lines starting with "#" are comments.

@@ -1,0 +1,18 @@
+# Every subsystem declares how its usage is measured, or it does not grow.
+# Checked by checks/metabolic.sh. It fails until at least one subsystem is
+# declared: list every directory directly under each root below.
+#
+# roots: the directories whose children are subsystems. Adjust to this
+# repository, as [a, b] or as a block list of "- dir" lines.
+#
+# Each subsystem, indented under "subsystems:":
+#
+#   - name: billing
+#     path: src/billing
+#     usage_metric: invoices created per day (table invoices)
+#     since: 2026-09-01
+#
+# usage_metric is mandatory and cannot be a placeholder (TODO, TBD, n/a, ...).
+# since is optional.
+roots: [src]
+subsystems:
