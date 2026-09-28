@@ -109,6 +109,13 @@ check "scalar include file left byte for byte" 0 cmp "$D/.gitlab-ci.yml" "$D/ori
 check "scalar include refusal writes nothing" 0 no_prumo "$D"
 
 D="$(repo none)"
+printf 'include:\n  local: ci/build.yml\n' >"$D/.gitlab-ci.yml"
+cp "$D/.gitlab-ci.yml" "$D/original.yml"
+check_output "map include cannot be extended safely, refused" 1 "by hand" "$I" "$D"
+check "map include file left byte for byte" 0 cmp "$D/.gitlab-ci.yml" "$D/original.yml"
+check "map include refusal writes nothing" 0 no_prumo "$D"
+
+D="$(repo none)"
 printf 'include:\n  - project: group/prumo-pack\n    file: %s\n' "$GITLAB_FILE" >"$D/.gitlab-ci.yml"
 cp "$D/.gitlab-ci.yml" "$D/original.yml"
 check_output "include already present by hand is kept" 0 "kept .gitlab-ci.yml" "$I" "$D"
