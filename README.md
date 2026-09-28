@@ -18,9 +18,10 @@ The paradigm itself, in full (chapters 1 to 9, English): [docs/whitepaper.md](do
 | `checks/fail-closed.sh` | Works, 12 tests |
 | `checks/metabolic.sh` | Works, 19 tests |
 | `checks/anti-leak.sh` | Works, 14 tests |
-| `bin/prumo-init` (scaffolds `.prumo/`, wires CI, idempotent) | Works, 59 tests |
+| `bin/prumo-init` (scaffolds `.prumo/`, vendors the gates, wires CI, idempotent) | Works, 91 tests |
+| `bin/prumo-vendor-verify` (vendored gates against their MANIFEST) | Works, 27 tests |
 | `bin/prumo-certify` (file parity, live back end, rendered DOM) | Works, 26 tests plus 3 that need a browser |
-| CI templates (GitLab `include:`, GitHub reusable workflow) | Structure tested, 37 tests plus 4 that need PyYAML; not run on a real runner |
+| CI templates (vendored and remote, GitLab and GitHub) | Structure tested, 52 tests plus 6 that need PyYAML; vendored jobs replayed locally from the YAML; not run on a real runner |
 | Claude Code plugin (skills and hooks) | Works, 91 tests; not loaded in a live session yet |
 
 Skipped tests are reported as skipped, never counted as passed.
@@ -140,7 +141,7 @@ usage error. `make leak` runs it over this pack with `ci/anti-leak.sha256`.
 Scaffolds `.prumo/` in a repository from `templates/.prumo/` and wires the gates into its CI.
 
 ```sh
-bin/prumo-init [--force-ci gitlab|github|none] /path/to/repo
+bin/prumo-init [--source vendor|remote] [--force-ci gitlab|github|none] /path/to/repo
 ```
 
 It creates each missing file and keeps each existing one byte for byte, printing `created` or
@@ -151,12 +152,20 @@ It creates each missing file and keeps each existing one byte for byte, printing
 - `specs/SPEC-template.md`, `environment-contracts/`, `execution-contracts/`;
 - a `subsystems.yml` skeleton and an empty `fail-closed.patterns`.
 
+`--source vendor` (the default) also copies the gates into `.prumo/vendor/` with a `MANIFEST`
+of sha256, mode and the pack commit (a 40 hex sha, never a tag). CI runs them from there, so it
+needs no network and no token, works while the pack is private, and a tag moved upstream cannot
+change what runs. The vendor directory belongs to the pack: a rerun replaces it when it differs,
+which is how it is upgraded or restored. The pack must be a git checkout, or init refuses.
+`--source remote` keeps the older form, where CI fetches the pack at tag `v0`.
+
 CI is detected: `.gitlab-ci.yml` means GitLab, `.github/` means GitHub, both means both.
 
-- **GitLab:** gets the remote include of `templates/ci/gitlab/prumo.yml` at tag `v0`, added
-  once. An existing block list `include:` gets one more item. Any other `include:` form is
+- **GitLab:** gets `include: - local: .prumo/vendor/ci/gitlab.yml` (vendor) or the remote
+  include of `templates/ci/gitlab/prumo.yml` at tag `v0` (remote), added once. An existing block list `include:` gets one more item. Any other `include:` form is
   refused, with the snippet to add by hand.
-- **GitHub:** gets `templates/ci/github/prumo.yml` copied to `.github/workflows/prumo.yml`.
+- **GitHub:** gets `templates/ci/github/prumo-vendored.yml` (vendor) or
+  `templates/ci/github/prumo.yml` (remote) copied to `.github/workflows/prumo.yml`.
 - **No CI detected:** refused. Gates that no CI runs are decorative Prumo. `--force-ci gitlab`
   or `--force-ci github` creates the CI file; `--force-ci none` accepts it with a warning.
 
@@ -230,7 +239,16 @@ per declared file (a file the site serves but the build no longer holds is not s
 
 ## CI templates
 
-GitLab, in `.gitlab-ci.yml`:
+**Vendored (default).** `prumo-init` writes them; nothing to copy by hand. Every job first runs
+`.prumo/vendor/bin/prumo-vendor-verify`: a missing, changed, re-moded or unlisted file fails the
+job before any gate runs. Variables (GitLab) or the workflow `env` block (GitHub) set
+`PRUMO_FAIL_CLOSED_DIRS`, `PRUMO_ANTI_LEAK` and `PRUMO_ANTI_LEAK_ARGS`, as below.
+
+**Limit of the MANIFEST:** it lives in the same repository as the files it describes. It stops
+drift and accidents; an edit that also rewrites the MANIFEST passes. Branch protection with a
+required pipeline is what stops a deliberate edit.
+
+**Remote (`--source remote`).** GitLab, in `.gitlab-ci.yml`:
 
 ```yaml
 include:
@@ -253,9 +271,10 @@ The project needs `.prumo/regression-rules/` and `.prumo/subsystems.yml`; the ch
 without them.
 
 **Limit:** the templates are checked for structure, script paths and the absence of soft
-failure, not executed on a real runner by this pack's tests. While this repository is
-private, a GitLab remote include and a GitHub reusable workflow from another owner cannot
-read it.
+failure, not executed on a real runner by this pack's tests. The vendored jobs were replayed
+locally from their YAML in a fresh clone of a consumer (green, and red on one tampered byte).
+While this repository is private, the remote form cannot be read by a GitLab runner or by a
+GitHub repository of another owner; the vendored form has no such limit.
 
 ## agent/claude-plugin
 
