@@ -4,24 +4,25 @@ teste que a prova, por uma etiqueta de texto.
 
 Contrato (mecanico, sem julgamento):
 
-  * uma invariante ACTIVA tem pelo menos uma etiqueta `PRUMO: <id>` fora da
+  * uma invariante ACTIVE tem pelo menos uma etiqueta `PRUMO: <id>` fora da
     prosa (codigo, CI, scripts);
-  * uma invariante REVOGADA nao tem etiqueta nenhuma: um guarda a defender uma
+  * uma invariante REVOKED nao tem etiqueta nenhuma: um guarda a defender uma
     regra morta bloqueia o negocio em vez de o proteger;
-  * uma invariante ABERTA cita uma issue e nao tem etiqueta (se ja tem prova,
-    passa a ACTIVA);
+  * uma invariante OPEN cita uma issue e nao tem etiqueta (se ja tem prova,
+    passa a ACTIVE);
   * nenhuma etiqueta cita um id que as regras nao declaram;
   * nenhum id e declarado duas vezes;
   * um ficheiro de regras sem invariante nenhuma e erro: o verificador ficou cego.
 
 Formato de uma invariante, numa linha de lista markdown:
 
-    - `BIZ-03` : **ACTIVA** : texto
-    - `BIZ-02` : **REVOGADA 2026-09-18 (quem)** : texto
-    - `BIZ-07` : **ABERTA** (issue #3) : texto
+    - `BIZ-03` : **ACTIVE** : texto
+    - `BIZ-02` : **REVOKED 2026-09-18 (quem)** : texto
+    - `BIZ-07` : **OPEN** (issue #3) : texto
 
 O separador entre campos e livre; so contam o id entre crases e o estado em
-negrito. Agnostico de linguagem: o que se varre e texto.
+negrito (ACTIVA, REVOGADA e ABERTA sao aceites como legado). Agnostico de
+linguagem: o que se varre e texto.
 
 Limite declarado: a etiqueta prova que ha um teste apontado a regra, nao que o
 teste passou nem que morde. Isso e trabalho do runner de testes e de mutacao.
@@ -64,6 +65,16 @@ def id_valido(s):
     return sufixo == "" or (len(sufixo) == 1 and "a" <= sufixo <= "z")
 
 
+def estado_declarado(resto):
+    """O estado em negrito. Os nomes portugueses sao aceites como legado."""
+    for estado, marcas in (("ACTIVE", ("**ACTIVE", "**ACTIVA")),
+                           ("REVOKED", ("**REVOKED", "**REVOGADA")),
+                           ("OPEN", ("**OPEN**", "**ABERTA**"))):
+        if any(m in resto for m in marcas):
+            return estado
+    return None
+
+
 class Invariante:
     def __init__(self, ident, estado, sitio):
         self.id = ident
@@ -88,21 +99,16 @@ def ler_invariantes(ficheiros, raiz, erros):
             if not id_valido(ident):
                 continue
             sitio = "%s:%d" % (rel, n)
-            if "**ACTIVA" in resto:
-                estado = "ACTIVA"
-            elif "**REVOGADA" in resto:
-                estado = "REVOGADA"
-            elif "**ABERTA**" in resto:
-                if not RE_ISSUE.search(resto):
-                    erros.append(
-                        "  %s (%s) esta ABERTA sem issue. Divida sem sitio onde ser "
-                        "discutida nao e divida declarada, e esquecimento." % (ident, sitio))
-                estado = "ABERTA"
-            else:
+            estado = estado_declarado(resto)
+            if estado is None:
                 erros.append(
-                    "  %s (%s) nao declara estado. Escreve `- `%s` : **ACTIVA** : ...` "
-                    "ou **REVOGADA <data> (<quem>)** ou **ABERTA** (issue #N)." % (ident, sitio, ident))
+                    "  %s (%s) nao declara estado. Escreve `- `%s` : **ACTIVE** : ...` "
+                    "ou **REVOKED <data> (<quem>)** ou **OPEN** (issue #N)." % (ident, sitio, ident))
                 continue
+            if estado == "OPEN" and not RE_ISSUE.search(resto):
+                erros.append(
+                    "  %s (%s) esta OPEN sem issue. Divida sem sitio onde ser "
+                    "discutida nao e divida declarada, e esquecimento." % (ident, sitio))
             out.append(Invariante(ident, estado, sitio))
     return out
 
@@ -236,21 +242,21 @@ def main(argv):
                           repetidas))
 
     orfas = ["  %s (%s) nao tem nenhuma etiqueta `PRUMO: %s`" % (i.id, i.sitio, i.id)
-             for i in declaradas if i.estado == "ACTIVA" and i.id not in usadas]
+             for i in declaradas if i.estado == "ACTIVE" and i.id not in usadas]
     if orfas:
-        violacoes.append(("invariantes ACTIVAS sem prova (etiqueta o teste ou revoga com data e autor)",
+        violacoes.append(("invariantes ACTIVE sem prova (etiqueta o teste ou revoga com data e autor)",
                           orfas))
 
     zombies = ["  %s ainda guardada em %s" % (i.id, ", ".join(usadas[i.id]))
-               for i in declaradas if i.estado == "REVOGADA" and i.id in usadas]
+               for i in declaradas if i.estado == "REVOKED" and i.id in usadas]
     if zombies:
-        violacoes.append(("invariantes REVOGADAS com guarda vivo (apaga o guarda ou reactiva)",
+        violacoes.append(("invariantes REVOKED com guarda vivo (apaga o guarda ou reactiva)",
                           zombies))
 
     provadas = ["  %s ja provada em %s" % (i.id, ", ".join(usadas[i.id]))
-                for i in declaradas if i.estado == "ABERTA" and i.id in usadas]
+                for i in declaradas if i.estado == "OPEN" and i.id in usadas]
     if provadas:
-        violacoes.append(("invariantes ABERTAS que afinal tem prova (passa a ACTIVA e fecha a issue)",
+        violacoes.append(("invariantes OPEN que afinal tem prova (passa a ACTIVE e fecha a issue)",
                           provadas))
 
     ids = set(vistas)
@@ -259,11 +265,11 @@ def main(argv):
     if fantasmas:
         violacoes.append(("etiquetas a citar invariantes nao declaradas", fantasmas))
 
-    cont = {"ACTIVA": 0, "REVOGADA": 0, "ABERTA": 0}
+    cont = {"ACTIVE": 0, "REVOKED": 0, "OPEN": 0}
     for i in declaradas:
         cont[i.estado] += 1
-    resumo = "%d declaradas (%d activas, %d revogadas, %d abertas), %d ids etiquetados, %d ficheiros varridos" % (
-        len(declaradas), cont["ACTIVA"], cont["REVOGADA"], cont["ABERTA"], len(usadas), varridos)
+    resumo = "%d declaradas (%d active, %d revoked, %d open), %d ids etiquetados, %d ficheiros varridos" % (
+        len(declaradas), cont["ACTIVE"], cont["REVOKED"], cont["OPEN"], len(usadas), varridos)
 
     if violacoes:
         for titulo, linhas in violacoes:

@@ -1,2 +1,2 @@
-- `SEC-01` : **ACTIVA** : provada
-- `BIZ-07` : **ABERTA** (issue #3) : afinal ja ha teste
+- `SEC-01` : **ACTIVE** : provada
+- `BIZ-07` : **OPEN** (issue #3) : afinal ja ha teste

@@ -29,10 +29,12 @@ de texto `PRUMO: <id>`. Varre texto, por isso serve para qualquer linguagem.
 Declarar uma invariante, numa linha de lista markdown:
 
 ```markdown
-- `BIZ-03` : **ACTIVA** : o preço nunca é negativo
-- `BIZ-02` : **REVOGADA 2026-09-18 (Daniel)** : texto
-- `BIZ-07` : **ABERTA** (issue #3) : texto
+- `BIZ-03` : **ACTIVE** : o preço nunca é negativo
+- `BIZ-02` : **REVOKED 2026-09-18 (Daniel)** : texto
+- `BIZ-07` : **OPEN** (issue #3) : texto
 ```
+
+`ACTIVA`, `REVOGADA` e `ABERTA` continuam a ser aceites, para repositórios já declarados em português.
 
 Marcar o teste que a prova, em qualquer ficheiro de código ou CI:
 
@@ -44,9 +46,9 @@ fn preco_nunca_negativo() { ... }
 
 Contrato verificado:
 
-- invariante ACTIVA tem pelo menos uma etiqueta fora da prosa;
-- invariante REVOGADA não tem etiqueta (um guarda a defender uma regra morta bloqueia o negócio);
-- invariante ABERTA cita uma issue e ainda não tem etiqueta;
+- invariante ACTIVE tem pelo menos uma etiqueta fora da prosa;
+- invariante REVOKED não tem etiqueta (um guarda a defender uma regra morta bloqueia o negócio);
+- invariante OPEN cita uma issue e ainda não tem etiqueta;
 - nenhuma etiqueta cita um id que as regras não declaram;
 - nenhum id é declarado duas vezes;
 - ficheiro de regras sem invariantes é erro (verificador cego não diz OK).

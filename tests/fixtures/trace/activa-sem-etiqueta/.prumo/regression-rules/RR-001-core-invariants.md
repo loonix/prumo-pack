@@ -1,2 +1,2 @@
-- `SEC-01` : **ACTIVA** : provada
-- `SEC-02` : **ACTIVA** : ninguem a prova
+- `SEC-01` : **ACTIVE** : provada
+- `SEC-02` : **ACTIVE** : ninguem a prova

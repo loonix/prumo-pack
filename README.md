@@ -27,14 +27,16 @@ real project.
 Links every invariant declared in `.prumo/regression-rules/` to the test that proves it, through
 the text tag `PRUMO: <id>`. It scans plain text, so it works for any language.
 
-Declare an invariant as one markdown list line. The status keywords are Portuguese and are
-matched literally: `ACTIVA` (active), `REVOGADA` (revoked), `ABERTA` (open).
+Declare an invariant as one markdown list line, with status `ACTIVE`, `REVOKED` or `OPEN`:
 
 ```markdown
-- `BIZ-03` : **ACTIVA** : price is never negative
-- `BIZ-02` : **REVOGADA 2026-09-18 (Daniel)** : text
-- `BIZ-07` : **ABERTA** (issue #3) : text
+- `BIZ-03` : **ACTIVE** : price is never negative
+- `BIZ-02` : **REVOKED 2026-09-18 (Daniel)** : text
+- `BIZ-07` : **OPEN** (issue #3) : text
 ```
+
+The Portuguese keywords `ACTIVA`, `REVOGADA` and `ABERTA` are still accepted, for repositories
+already declared in Portuguese.
 
 Tag the test that proves it, in any code or CI file:
 
@@ -46,9 +48,9 @@ fn price_never_negative() { ... }
 
 Contract checked:
 
-- an ACTIVA invariant has at least one tag outside prose;
-- a REVOGADA invariant has no tag (a guard defending a dead rule blocks the business);
-- an ABERTA invariant cites an issue and has no tag yet;
+- an ACTIVE invariant has at least one tag outside prose;
+- a REVOKED invariant has no tag (a guard defending a dead rule blocks the business);
+- an OPEN invariant cites an issue and has no tag yet;
 - no tag cites an id the rules do not declare;
 - no id is declared twice;
 - a rules file with no invariants is an error (a blind checker does not get to say OK).

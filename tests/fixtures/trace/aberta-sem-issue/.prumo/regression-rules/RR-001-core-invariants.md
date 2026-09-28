@@ -1,2 +1,2 @@
-- `SEC-01` : **ACTIVA** : provada
-- `BIZ-07` : **ABERTA** : divida sem sitio onde ser discutida
+- `SEC-01` : **ACTIVE** : provada
+- `BIZ-07` : **OPEN** : divida sem sitio onde ser discutida
