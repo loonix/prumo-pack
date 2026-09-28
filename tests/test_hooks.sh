@@ -79,6 +79,41 @@ elif what.startswith("routes:"):
                 sys.exit(0)
     fail("%s does not route to %s" % (tool, script))
 
+elif what.startswith("skills:"):
+    # skills:<dir>:<expected,names>: every SKILL.md opens with frontmatter
+    # holding its own name and a description; the expected skills exist.
+    _, skills_dir, expected = what.split(":")
+    found = []
+    if os.path.isdir(skills_dir):
+        for name in sorted(os.listdir(skills_dir)):
+            path = os.path.join(skills_dir, name, "SKILL.md")
+            if not os.path.isfile(path):
+                continue
+            lines = open(path, encoding="utf-8").read().split("\n")
+            if lines[0] != "---" or "---" not in lines[1:]:
+                fail("%s has no frontmatter" % path)
+            meta = {}
+            for line in lines[1:lines.index("---", 1)]:
+                m = re.fullmatch(r"([A-Za-z_-]+):\s*(.*)", line)
+                if not m:
+                    fail("%s frontmatter line is not key: value: %r" % (path, line))
+                value = m.group(2).strip()
+                quoted = len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'"
+                if not quoted and (": " in value or " #" in value or value[:1] in "[{&*!|>%@`"):
+                    fail("%s: %s needs quotes to be valid YAML" % (path, m.group(1)))
+                meta[m.group(1)] = value[1:-1] if quoted else value
+            if meta.get("name") != name:
+                fail("%s name is %r, directory is %r" % (path, meta.get("name"), name))
+            if len(meta.get("description", "")) < 20:
+                fail("%s has no real description" % path)
+            found.append(name)
+    if not found:
+        fail("zero SKILL.md found in %s" % skills_dir)
+    missing = [n for n in expected.split(",") if n and n not in found]
+    if missing:
+        fail("missing skills: %s" % ", ".join(missing))
+    print("skills ok: %d" % len(found))
+
 else:
     fail("unknown check %s" % what)
 PY
@@ -274,5 +309,21 @@ check_output "Write of .gitlab-ci.yml without content blocks" 2 "cannot read" \
   hook ci_soft_fail.py '{"tool_name":"Write","tool_input":{"file_path":"/r/.gitlab-ci.yml"}}'
 check_output "Write without file_path blocks" 2 "cannot read" \
   hook ci_soft_fail.py '{"tool_name":"Write","tool_input":{"content":"allow_failure: true"}}'
+
+echo "skills"
+check_output "every SKILL.md has frontmatter with its name and a description" 0 "skills ok: 3" \
+  plugin_check "skills:$P/skills:prumo-certify-before-done,prumo-trace,prumo-worktree"
+D="$(tmpdir)"
+check_output "zero skills found fails (the check does not pass blind)" 1 "zero SKILL.md" \
+  plugin_check "skills:$D:"
+mkdir -p "$D/bad"
+printf 'no frontmatter here\n' >"$D/bad/SKILL.md"
+check_output "SKILL.md without frontmatter fails" 1 "no frontmatter" plugin_check "skills:$D:"
+printf -- '---\nname: bad\n---\nbody\n' >"$D/bad/SKILL.md"
+check_output "SKILL.md without description fails" 1 "no real description" plugin_check "skills:$D:"
+printf -- '---\nname: other\ndescription: a description that is long enough\n---\n' >"$D/bad/SKILL.md"
+check_output "name that differs from the directory fails" 1 "name is 'other'" plugin_check "skills:$D:"
+printf -- '---\nname: bad\ndescription: Use when: the value breaks YAML\n---\n' >"$D/bad/SKILL.md"
+check_output "unquoted description with ': ' fails (invalid YAML)" 1 "needs quotes" plugin_check "skills:$D:"
 
 finish
