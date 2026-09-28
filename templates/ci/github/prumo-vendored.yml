@@ -1,0 +1,65 @@
+# Prumo gates for a GitHub repository, run from the copy prumo-init vendored
+# into .prumo/vendor/. prumo-init writes this file to .github/workflows/prumo.yml.
+#
+# Nothing is fetched from the pack: a private pack needs no cross repository
+# access and a tag moved upstream cannot change what runs here. Every job
+# first runs prumo-vendor-verify, so a vendored file that drifted from its
+# MANIFEST fails before any gate runs. Rerun prumo-init to upgrade or restore.
+#
+# Edit the env block below for the directories fail-closed scans and to turn
+# anti-leak on. No job has continue-on-error. Deploy jobs must `needs:` these.
+
+name: prumo
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  PRUMO_VENDOR_DIR: .prumo/vendor
+  PRUMO_FAIL_CLOSED_DIRS: "."
+  PRUMO_ANTI_LEAK: "off"
+  PRUMO_ANTI_LEAK_ARGS: "."
+
+jobs:
+  prumo-trace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: verify vendored gates
+        run: '"$PRUMO_VENDOR_DIR/bin/prumo-vendor-verify" "$PRUMO_VENDOR_DIR"'
+      - name: prumo-trace
+        run: '"$PRUMO_VENDOR_DIR/bin/prumo-trace" --root .'
+
+  prumo-fail-closed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: verify vendored gates
+        run: '"$PRUMO_VENDOR_DIR/bin/prumo-vendor-verify" "$PRUMO_VENDOR_DIR"'
+      - name: fail-closed
+        # Globbing is off so the names are taken literally.
+        run: set -f; "$PRUMO_VENDOR_DIR/checks/fail-closed.sh" $PRUMO_FAIL_CLOSED_DIRS
+
+  prumo-metabolic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: verify vendored gates
+        run: '"$PRUMO_VENDOR_DIR/bin/prumo-vendor-verify" "$PRUMO_VENDOR_DIR"'
+      - name: metabolic
+        run: '"$PRUMO_VENDOR_DIR/checks/metabolic.sh" .'
+
+  # A job level `if` cannot read env, so the switch sits on the step.
+  prumo-anti-leak:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: verify vendored gates
+        run: '"$PRUMO_VENDOR_DIR/bin/prumo-vendor-verify" "$PRUMO_VENDOR_DIR"'
+      - name: anti-leak
+        if: env.PRUMO_ANTI_LEAK == 'on'
+        run: set -f; "$PRUMO_VENDOR_DIR/checks/anti-leak.sh" $PRUMO_ANTI_LEAK_ARGS

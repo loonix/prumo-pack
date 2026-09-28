@@ -1,0 +1,68 @@
+# Prumo gates for GitLab CI, run from the copy prumo-init vendored into
+# .prumo/vendor/. No job reaches the network for the pack: a private pack
+# needs no token and a tag moved upstream cannot change what runs here.
+#
+# prumo-init copies this file to .prumo/vendor/ci/gitlab.yml and adds to the
+# project's .gitlab-ci.yml:
+#
+#   include:
+#     - local: .prumo/vendor/ci/gitlab.yml
+#
+#   variables:
+#     PRUMO_FAIL_CLOSED_DIRS: "src services"   # optional, default "."
+#     PRUMO_ANTI_LEAK: "on"                     # optional, default "off"
+#     PRUMO_ANTI_LEAK_ARGS: "--exclude tests/fixtures ."   # default "."
+#
+# Every job first runs prumo-vendor-verify: a vendored file that drifted from
+# its MANIFEST fails the job before any gate runs. Rerun prumo-init from the
+# pack to upgrade or restore. No job has allow_failure: a gate that may fail
+# without stopping the pipeline is a log line, not a gate.
+#
+# Deploy jobs must `needs:` every test job, the Prumo jobs included:
+#
+#   deploy-production:
+#     stage: deploy
+#     needs:
+#       - job: unit-tests
+#       - job: prumo-trace
+#       - job: prumo-fail-closed
+#       - job: prumo-metabolic
+#       - job: prumo-anti-leak
+#         optional: true             # absent while PRUMO_ANTI_LEAK is "off"
+
+variables:
+  PRUMO_VENDOR_DIR: ".prumo/vendor"
+  PRUMO_FAIL_CLOSED_DIRS: "."
+  PRUMO_ANTI_LEAK: "off"
+  PRUMO_ANTI_LEAK_ARGS: "."
+  PRUMO_IMAGE: "python:3.12"
+
+.prumo-base:
+  stage: test
+  image: $PRUMO_IMAGE
+  before_script:
+    - '"$PRUMO_VENDOR_DIR/bin/prumo-vendor-verify" "$PRUMO_VENDOR_DIR"'
+
+prumo-trace:
+  extends: .prumo-base
+  script:
+    - '"$PRUMO_VENDOR_DIR/bin/prumo-trace" --root .'
+
+prumo-fail-closed:
+  extends: .prumo-base
+  script:
+    # Space separated list; globbing is off so the names are taken literally.
+    - set -f; "$PRUMO_VENDOR_DIR/checks/fail-closed.sh" $PRUMO_FAIL_CLOSED_DIRS
+
+prumo-metabolic:
+  extends: .prumo-base
+  script:
+    - '"$PRUMO_VENDOR_DIR/checks/metabolic.sh" .'
+
+prumo-anti-leak:
+  extends: .prumo-base
+  rules:
+    - if: '$PRUMO_ANTI_LEAK == "on"'
+  script:
+    # Space separated arguments; globbing is off so they are taken literally.
+    - set -f; "$PRUMO_VENDOR_DIR/checks/anti-leak.sh" $PRUMO_ANTI_LEAK_ARGS
