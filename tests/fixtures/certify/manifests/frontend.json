@@ -1,0 +1,6 @@
+{
+  "frontend": [
+    { "name": "home shows the price", "path": "/index.html",
+      "expect_text": ["Example site", "Plans start at 10 per month"] }
+  ]
+}

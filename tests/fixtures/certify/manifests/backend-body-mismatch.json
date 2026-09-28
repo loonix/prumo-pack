@@ -1,0 +1,6 @@
+{
+  "backend": [
+    { "name": "health reports the database", "method": "GET", "path": "/health",
+      "expect_status": 200, "expect_body_contains": "\"db\": \"degraded\"" }
+  ]
+}

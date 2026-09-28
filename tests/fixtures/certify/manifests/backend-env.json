@@ -1,0 +1,8 @@
+{
+  "backend": [
+    { "name": "wrong api key is refused", "method": "POST", "path": "/api/items",
+      "headers": { "X-Api-Key": "${PRUMO_TEST_API_KEY}" },
+      "body": { "title": "CERTIFICATION wrong key", "price_cents": 4900 },
+      "expect_status": 401 }
+  ]
+}

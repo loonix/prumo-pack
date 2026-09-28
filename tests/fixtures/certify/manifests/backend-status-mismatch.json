@@ -1,0 +1,10 @@
+{
+  "backend": [
+    { "name": "item priced at zero is refused", "method": "POST", "path": "/api/items",
+      "body": { "title": "CERTIFICATION invalid on purpose", "price_cents": 0 },
+      "expect_status": 400 },
+    { "name": "rule regressed: a valid body slips through", "method": "POST", "path": "/api/items",
+      "body": { "title": "CERTIFICATION should be refused", "price_cents": 4900 },
+      "expect_status": 400 }
+  ]
+}

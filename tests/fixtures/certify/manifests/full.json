@@ -1,0 +1,14 @@
+{
+  "files": [
+    { "local": "../site/index.html", "url": "/index.html" }
+  ],
+  "backend": [
+    { "name": "item priced at zero is refused", "method": "POST", "path": "/api/items",
+      "body": { "title": "CERTIFICATION invalid on purpose", "price_cents": 0 },
+      "expect_status": 400 }
+  ],
+  "frontend": [
+    { "name": "home shows the price", "path": "/index.html",
+      "expect_text": ["Plans start at 10 per month"] }
+  ]
+}

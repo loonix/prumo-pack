@@ -1,0 +1,6 @@
+{
+  "frontend": [
+    { "name": "page renders without console errors", "path": "/console-error.html",
+      "expect_text": ["Broken page"] }
+  ]
+}

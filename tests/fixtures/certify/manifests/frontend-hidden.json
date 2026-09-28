@@ -1,0 +1,6 @@
+{
+  "frontend": [
+    { "name": "hidden text is not visible text", "path": "/index.html",
+      "expect_text": ["Hidden launch promo"] }
+  ]
+}

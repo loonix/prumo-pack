@@ -1,0 +1,14 @@
+{
+  "backend": [
+    { "name": "health reports the database", "method": "GET", "path": "/health",
+      "expect_status": 200, "expect_body_contains": "\"db\": \"ok\"" },
+    { "name": "private endpoint needs a session", "method": "GET", "path": "/api/private",
+      "expect_status": 401 },
+    { "name": "item priced at zero is refused", "method": "POST", "path": "/api/items",
+      "body": { "title": "CERTIFICATION invalid on purpose", "price_cents": 0 },
+      "expect_status": 400, "expect_body_contains": "price must be positive" },
+    { "name": "item without a price is refused", "method": "POST", "path": "/api/items",
+      "body": { "title": "CERTIFICATION invalid on purpose" },
+      "expect_status": 400 }
+  ]
+}
