@@ -8,7 +8,9 @@ GITLAB="templates/ci/gitlab/prumo.yml"
 GH_REUSABLE=".github/workflows/prumo.yml"
 GH_STUB="templates/ci/github/prumo.yml"
 GH_CI=".github/workflows/ci.yml"
-TEMPLATES="$GITLAB $GH_REUSABLE $GH_STUB $GH_CI"
+GITLAB_VENDORED="templates/ci/gitlab/prumo-vendored.yml"
+GH_VENDORED="templates/ci/github/prumo-vendored.yml"
+TEMPLATES="$GITLAB $GH_REUSABLE $GH_STUB $GH_CI $GITLAB_VENDORED $GH_VENDORED"
 
 # Scripts built in parallel on other branches (anti-leak has landed, the other
 # two may not have). A template may call them before they land; any other
@@ -165,7 +167,7 @@ printf 'job:\n  script: [x]\n  allow_failure: true\n' >"$D/t/bad.yml"
 check "the soft failure check bites on allow_failure: true" 1 env PACK_ROOT="$D" bash -c "$(declare -f no_soft_failure); no_soft_failure t/bad.yml"
 
 echo "script paths resolve"
-for t in $GITLAB $GH_REUSABLE; do
+for t in $GITLAB $GH_REUSABLE $GITLAB_VENDORED $GH_VENDORED; do
   check "$t names only shipped or pending scripts" 0 script_refs_resolve "$t"
 done
 # The pack's own CI calls make targets; the scripts behind them are in the Makefile.
@@ -180,6 +182,16 @@ check "$GH_CI make targets exist in the Makefile" 0 make_targets_exist "$GH_CI"
 # Makefile target that carries the hashed deny list and the fixture excludes.
 check "$GH_CI runs make leak unguarded" 0 grep -qE '^ *run: make leak$' "$PACK_ROOT/$GH_CI"
 check "$GH_STUB calls the reusable workflow by its real path" 0 grep -qE "uses: loonix/prumo-pack/$GH_REUSABLE@" "$PACK_ROOT/$GH_STUB"
+
+echo "vendored templates"
+check "$GITLAB_VENDORED jobs each call a pack script" 0 jobs_call_scripts "$GITLAB_VENDORED" prumo-trace prumo-fail-closed prumo-metabolic prumo-anti-leak
+check "$GH_VENDORED jobs each call a pack script" 0 jobs_call_scripts "$GH_VENDORED" prumo-trace prumo-fail-closed prumo-metabolic prumo-anti-leak
+check "$GITLAB_VENDORED verifies the MANIFEST before every job" 0 grep -qE 'before_script:' "$PACK_ROOT/$GITLAB_VENDORED"
+check "$GH_VENDORED verifies the MANIFEST in all 4 jobs" 0 test "$(grep -c 'bin/prumo-vendor-verify' "$PACK_ROOT/$GH_VENDORED")" = 4
+for t in $GITLAB_VENDORED $GH_VENDORED; do
+  check "$t reaches no network for the pack" 1 grep -nE '^[^#]*(remote:|git (clone|fetch)|repository: *loonix)' "$PACK_ROOT/$t"
+done
+check "$GH_VENDORED gates anti-leak on a step, not a job level env if" 1 grep -qE '^    if: env\.' "$PACK_ROOT/$GH_VENDORED"
 
 echo "reusable workflow"
 check "$GH_REUSABLE declares workflow_call" 0 declares_workflow_call "$GH_REUSABLE"
