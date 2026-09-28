@@ -4,7 +4,7 @@ test:
 	bash tests/run.sh
 
 leak:
-	bash checks/anti-leak.sh .
+	checks/anti-leak.sh --deny-file ci/anti-leak.sha256 --exclude tests/fixtures/anti-leak --exclude tests/test_anti_leak.sh .
 
 trace:
 	bin/prumo-trace --root .
