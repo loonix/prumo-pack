@@ -13,31 +13,49 @@
 #   github  create .github/workflows/prumo.yml
 #   none    scaffold .prumo/ and wire nothing (prints a warning)
 #
-# GitLab: a remote include of templates/ci/gitlab/prumo.yml at the v0 tag of
-# the pack is added, the form documented in that template. An existing block
-# list include gets one more item; any other include form is a refusal with the
+# --source picks where CI gets the gates from:
+#   vendor  (default) the gates are copied into .prumo/vendor/ with a MANIFEST
+#           of sha256, mode and the pack commit; CI verifies the MANIFEST and
+#           runs them from there. No network, so a private pack works, and a
+#           tag moved upstream cannot change what runs. The vendor directory
+#           belongs to the pack: a rerun replaces it when it differs, which is
+#           how it is upgraded or restored after drift. The pack must be a git
+#           checkout, so the MANIFEST can pin a commit.
+#   remote  CI fetches the pack at the v0 tag (needs the pack to be readable
+#           by the runner, so a public pack or a token).
+#
+# GitLab: an include is added (local: .prumo/vendor/ci/gitlab.yml, or the
+# remote include of templates/ci/gitlab/prumo.yml). An existing block list
+# include gets one more item; any other include form is a refusal with the
 # snippet to add by hand.
-# GitHub: templates/ci/github/prumo.yml is copied to .github/workflows/prumo.yml;
-# it calls the reusable workflow of the pack.
+# GitHub: .github/workflows/prumo.yml is created from
+# templates/ci/github/prumo-vendored.yml (vendor) or templates/ci/github/prumo.yml
+# (remote, a call to the reusable workflow of the pack).
 #
 # Checks run before any write: a refusal leaves the repository untouched.
 #
-# Usage: bin/prumo-init [--force-ci gitlab|github|none] <repo>
+# Usage: bin/prumo-init [--source vendor|remote] [--force-ci gitlab|github|none] <repo>
 # Exit:  0 ok, 1 refusal, 2 usage error.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 TEMPLATES="$HERE/../templates/.prumo"
+PACK="$(cd "$HERE/.." && pwd)"
 GITLAB_TEMPLATE="templates/ci/gitlab/prumo.yml"
-GITHUB_TEMPLATE="$HERE/../templates/ci/github/prumo.yml"
 GITHUB_WORKFLOW=".github/workflows/prumo.yml"
+VENDOR=".prumo/vendor"
+# Everything a vendored pipeline runs. ci/gitlab.yml comes from
+# templates/ci/gitlab/prumo-vendored.yml.
+VENDOR_FILES="bin/prumo-trace bin/prumo-vendor-verify lib/prumo_trace.py checks/fail-closed.sh checks/metabolic.sh checks/anti-leak.sh"
 
+USAGE="usage: bin/prumo-init [--source vendor|remote] [--force-ci gitlab|github|none] <repo>"
 usage() {
-  echo "usage: bin/prumo-init [--force-ci gitlab|github|none] <repo>" >&2
+  echo "$USAGE" >&2
   exit 2
 }
 
 force=""
+source="vendor"
 repo=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -52,8 +70,19 @@ while [ "$#" -gt 0 ]; do
       esac
       shift 2
       ;;
+    --source)
+      [ "$#" -ge 2 ] || usage
+      case "$2" in
+        vendor | remote) source="$2" ;;
+        *)
+          echo "prumo-init: --source takes vendor|remote, not '$2'." >&2
+          usage
+          ;;
+      esac
+      shift 2
+      ;;
     -h | --help)
-      echo "usage: bin/prumo-init [--force-ci gitlab|github|none] <repo>"
+      echo "$USAGE"
       exit 0
       ;;
     -*)
@@ -98,18 +127,19 @@ esac
 # gitlab <plan|apply> <file>: plan prints the action (create, keep, append,
 # insert) or refuses with exit 1; apply performs it.
 gitlab() {
-  python3 - "$1" "$2" "$GITLAB_TEMPLATE" <<'PY'
+  python3 - "$1" "$2" "$GITLAB_TEMPLATE" "$source" "$VENDOR" <<'PY'
 import os
 import re
 import sys
 
-mode, path, template = sys.argv[1], sys.argv[2], sys.argv[3]
-COMMENT = [
-    "# Prumo gates from prumo-pack, pinned to the v0 tag of the pack.",
-]
-ITEM = [
-    "- remote: https://raw.githubusercontent.com/loonix/prumo-pack/v0/" + template,
-]
+mode, path, template, source, vendor = sys.argv[1:6]
+if source == "vendor":
+    template = vendor + "/ci/gitlab.yml"
+    COMMENT = ["# Prumo gates vendored by prumo-init; rerun it to upgrade."]
+    ITEM = ["- local: " + template]
+else:
+    COMMENT = ["# Prumo gates from prumo-pack, pinned to the v0 tag of the pack."]
+    ITEM = ["- remote: https://raw.githubusercontent.com/loonix/prumo-pack/v0/" + template]
 SNIPPET = "\n".join(COMMENT + ["include:"] + ["  " + l for l in ITEM]) + "\n"
 
 if not os.path.lexists(path):
@@ -157,6 +187,23 @@ with open(path, "w", encoding="utf-8") as fh:
 PY
 }
 
+# The pack commit the MANIFEST pins. Resolved before any write.
+pack_commit=""
+pack_dirty="no"
+if [ "$source" = vendor ]; then
+  top="$(git -C "$PACK" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -z "$top" ] || [ "$(cd "$top" && pwd -P)" != "$(cd "$PACK" && pwd -P)" ]; then
+    echo "prumo-init: REFUSED, $PACK is not a git checkout of prumo-pack, so there is no" >&2
+    echo "commit for .prumo/vendor/MANIFEST to pin. Run it from a clone of the pack." >&2
+    exit 1
+  fi
+  pack_commit="$(git -C "$PACK" rev-parse HEAD)"
+  # shellcheck disable=SC2086
+  if [ -n "$(git -C "$PACK" status --porcelain -- $VENDOR_FILES templates/ci/gitlab/prumo-vendored.yml)" ]; then
+    pack_dirty="yes"
+  fi
+fi
+
 gitlab_action=""
 if [ "$wire_gitlab" = 1 ]; then
   gitlab_action="$(gitlab plan "$repo/.gitlab-ci.yml")" || exit 1
@@ -186,6 +233,48 @@ while IFS= read -r src; do
   fi
 done < <(find "$TEMPLATES" -type f | LC_ALL=C sort)
 
+# stage_vendor <dir>: writes the vendor tree and its MANIFEST into <dir>.
+stage_vendor() {
+  local d="$1" f mode
+  for f in $VENDOR_FILES; do
+    mkdir -p "$d/$(dirname "$f")"
+    cp "$PACK/$f" "$d/$f"
+  done
+  mkdir -p "$d/ci"
+  cp "$PACK/templates/ci/gitlab/prumo-vendored.yml" "$d/ci/gitlab.yml"
+  {
+    echo "# prumo-pack vendored gates. Written by prumo-init; rerun it, do not edit."
+    echo "format 1"
+    echo "pack_commit $pack_commit"
+    echo "pack_dirty $pack_dirty"
+    echo "pack_version $(cat "$PACK/VERSION")"
+    (cd "$d" && find . -type f | sed 's|^\./||' | LC_ALL=C sort) | while read -r f; do
+      if [ -x "$d/$f" ]; then mode=755; chmod 755 "$d/$f"; else mode=644; chmod 644 "$d/$f"; fi
+      echo "file $(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$d/$f") $mode $f"
+    done
+  } >"$d.MANIFEST"
+  mv "$d.MANIFEST" "$d/MANIFEST"
+}
+
+if [ "$source" = vendor ]; then
+  stage="$(mktemp -d "${TMPDIR:-/tmp}/prumo-vendor.XXXXXX")"
+  trap 'rm -rf "$stage"' EXIT
+  stage_vendor "$stage/vendor"
+  dest="$repo/$VENDOR"
+  if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
+    mkdir -p "$(dirname "$dest")"
+    mv "$stage/vendor" "$dest"
+    report created "$VENDOR/MANIFEST"
+  elif [ -f "$dest/MANIFEST" ] && cmp -s "$dest/MANIFEST" "$stage/vendor/MANIFEST" \
+    && "$stage/vendor/bin/prumo-vendor-verify" "$dest" >/dev/null 2>&1; then
+    report kept "$VENDOR/MANIFEST"
+  else
+    rm -rf "$dest"
+    mv "$stage/vendor" "$dest"
+    report updated "$VENDOR/MANIFEST"
+  fi
+fi
+
 case "$gitlab_action" in
   "") ;;
   keep) report kept ".gitlab-ci.yml" ;;
@@ -205,7 +294,11 @@ if [ "$wire_github" = 1 ]; then
     report kept "$GITHUB_WORKFLOW"
   else
     mkdir -p "$(dirname "$wf")"
-    cp "$GITHUB_TEMPLATE" "$wf"
+    if [ "$source" = vendor ]; then
+      cp "$PACK/templates/ci/github/prumo-vendored.yml" "$wf"
+    else
+      cp "$PACK/templates/ci/github/prumo.yml" "$wf"
+    fi
     report created "$GITHUB_WORKFLOW"
   fi
 fi
@@ -214,8 +307,14 @@ printf 'prumo-init: %d created, %d updated, %d kept.\n' "$created" "$updated" "$
 if [ "$force" = "none" ]; then
   echo "prumo-init: WARNING, --force-ci none: no CI wired. The gates bite only once CI runs them." >&2
 fi
-if [ "$gitlab_action" = create ] || [ "$gitlab_action" = append ] || [ "$gitlab_action" = insert ]; then
+if [ "$source" = remote ] && { [ "$gitlab_action" = create ] || [ "$gitlab_action" = append ] || [ "$gitlab_action" = insert ]; }; then
   echo "next: the include fetches prumo-pack from GitHub at tag v0; the runner must be able to read it."
+fi
+if [ "$source" = vendor ]; then
+  echo "next: commit $VENDOR/ with the rest; CI verifies it against its MANIFEST (prumo-pack $pack_commit)."
+  if [ "$pack_dirty" = yes ]; then
+    echo "prumo-init: WARNING, the pack has uncommitted changes in vendored files; the MANIFEST says so." >&2
+  fi
 fi
 if [ "$created" -gt 0 ]; then
   echo "next: prumo-trace fails until a test is tagged with the id CORE-01 (or the rule is replaced),"
