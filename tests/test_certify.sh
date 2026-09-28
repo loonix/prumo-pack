@@ -106,6 +106,9 @@ D="$(tmpdir)"
 printf '{ "frontend": [ { "name": "x", "path": "/", "expect_text": ["a"], "expect_absent": "b" } ] }\n' >"$D/m.json"
 check_output "expect_absent that is not a list of strings fails" 1 "expect_absent must be a non-empty list" \
   "$C" --base-url "$URL" --manifest "$D/m.json"
+printf '{ "frontend": [ { "name": "x", "path": "/", "expect_text": ["a"], "expect_visible_selector": [""] } ] }\n' >"$D/m.json"
+check_output "expect_visible_selector with an empty selector fails" 1 "expect_visible_selector must be a non-empty list" \
+  "$C" --base-url "$URL" --manifest "$D/m.json"
 
 echo "rendered DOM, tool missing"
 check_output "frontend declared, node missing: SKIPPED counts as failure" 1 "SKIPPED" \
@@ -137,9 +140,15 @@ if node "$DOM" --probe "$M" >/dev/null 2>&1; then
     "$C" --base-url "$URL" --manifest "$M/frontend-absent-pass.json"
   check_output "a text that must be absent but is visible fails, case-insensitive" 1 'still visible: "plans START at"' \
     "$C" --base-url "$URL" --manifest "$M/frontend-absent-fail.json"
+  check_output "selectors that exist and are visible pass" 0 "1 passed, 0 failed" \
+    "$C" --base-url "$URL" --manifest "$M/frontend-selector-pass.json"
+  check_output "hidden, empty, missing or invalid selectors fail, each named" 1 \
+    'selector not visible: #promo (display:none on it or an ancestor), #ghost (visibility:hidden), #empty (zero-size box), #nowhere (no element matches), p > (invalid selector)' \
+    "$C" --base-url "$URL" --manifest "$M/frontend-selector-fail.json"
 else
   for n in "visible text passes" "hidden text fails" "console error fails" \
-    "absent texts pass" "visible absent text fails"; do
+    "absent texts pass" "visible absent text fails" \
+    "visible selectors pass" "hidden selectors fail"; do
     skip "$n" "node with playwright and chromium not available (set NODE_PATH)"
   done
 fi

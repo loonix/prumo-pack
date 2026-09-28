@@ -8,7 +8,8 @@ Three layers, all measured against the base url, none against the source tree:
   2. backend    live HTTP requests answer with the declared status and body;
   3. frontend   each page, rendered in a real browser, shows the declared text
                 in its visible innerText, does not show the texts declared
-                absent (case-insensitive) and logs no console error.
+                absent (case-insensitive), renders the declared selectors
+                visible and logs no console error.
 
 Origin: a change was reported done after measuring the file in the repository,
 while production still served the old copy. Two true measurements, neither of
@@ -26,7 +27,8 @@ Manifest (prumo-certify.json by default), English keys, every layer optional:
                    "body": {...}, "expect_status": 400,
                    "expect_body_contains": "..."} ],
     "frontend": [ {"name": "...", "path": "/", "expect_text": ["..."],
-                   "expect_absent": ["..."]} ]
+                   "expect_absent": ["..."],
+                   "expect_visible_selector": ["#signup"]} ]
   }
 
 Local paths are relative to the manifest. Keys starting with "_" are comments.
@@ -37,6 +39,10 @@ holding fewer than min_count files (private ones included) is refused, so a
 build step that emptied the directory cannot pass on the few files left.
 "${NAME}" in a path, header value or body string is read from the environment;
 an unset variable fails the check instead of sending an empty secret.
+
+A frontend selector is visible when the first element it matches is rendered
+(no display:none on it or an ancestor), has a non-zero box and computed
+visibility "visible". No match or an invalid selector fails.
 
 Backend writes should be INVALID requests the service must refuse (a price of
 zero, a missing field, a wrong key): the rule is exercised and production is not
@@ -72,11 +78,11 @@ KEYS = {
                "min_count"}, set()),
     "backend": ({"name", "method", "path", "body", "headers", "expect_status",
                  "expect_body_contains"}, {"name", "method", "path", "expect_status"}),
-    "frontend": ({"name", "path", "expect_text", "expect_absent"},
+    "frontend": ({"name", "path", "expect_text", "expect_absent", "expect_visible_selector"},
                  {"name", "path", "expect_text"}),
 }
 # Frontend assertions, each a list of non-empty strings, passed to the DOM runner.
-FRONTEND_LISTS = ("expect_text", "expect_absent")
+FRONTEND_LISTS = ("expect_text", "expect_absent", "expect_visible_selector")
 ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 

@@ -1,0 +1,7 @@
+{
+  "frontend": [
+    { "name": "home shows elements that are hidden, empty or absent", "path": "/index.html",
+      "expect_text": ["Example site"],
+      "expect_visible_selector": ["#cta", "#promo", "#ghost", "#empty", "#nowhere", "p >"] }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "frontend": [
+    { "name": "home shows the sign up link", "path": "/index.html",
+      "expect_text": ["Example site"],
+      "expect_visible_selector": ["#cta", "h1"] }
+  ]
+}
