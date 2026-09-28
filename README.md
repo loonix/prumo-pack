@@ -1,72 +1,76 @@
 # prumo-pack
 
-Os gates do Prumo empacotados para instalar em qualquer repositório (GitLab, GitHub ou outro).
-Uma fonte, N consumidores, em vez de scripts copiados à mão entre projetos.
+**English** | [Português](README.pt.md)
 
-O Prumo é um paradigma de engenharia para trabalho com agentes. A regra que guia este pack:
-**um gate cujo token de satisfação é produzido pelo modelo não é gate.** Tudo aqui é mecânico,
-nenhum check chama um LLM, e só entra o que já foi medido a morder num projeto real.
+The Prumo gates, packaged to install in any repository (GitLab, GitHub or anything else).
+One source, N consumers, instead of scripts copied by hand between projects.
 
-## Estado (v0.1.0)
+Prumo is an engineering paradigm for working with agents. The rule behind this pack:
+**a gate whose satisfaction token is produced by the model is not a gate.** Everything here is
+mechanical, no check calls an LLM, and nothing gets in until it has been measured biting in a
+real project.
 
-| Peça | Estado |
+## Status (v0.1.0)
+
+| Piece | Status |
 |---|---|
-| `bin/prumo-trace` | Funciona, 28 testes |
-| `checks/fail-closed.sh` | Em construção |
-| `checks/metabolic.sh` | Por fazer |
-| `bin/prumo-init` (scaffold `.prumo/`, idempotente) | Por fazer |
-| `bin/prumo-certify` (paridade, back-end vivo, DOM renderizado) | Por fazer |
-| Templates de CI (GitLab `include:`, GitHub reusable workflow) | Por fazer |
-| Plugin Claude Code (skills e hooks) | Por fazer |
+| `bin/prumo-trace` | Works, 28 tests |
+| `checks/fail-closed.sh` | In progress |
+| `checks/metabolic.sh` | Not started |
+| `bin/prumo-init` (scaffolds `.prumo/`, idempotent) | Not started |
+| `bin/prumo-certify` (file parity, live back end, rendered DOM) | Not started |
+| CI templates (GitLab `include:`, GitHub reusable workflow) | Not started |
+| Claude Code plugin (skills and hooks) | Not started |
 
 ## prumo-trace
 
-Liga cada invariante declarada em `.prumo/regression-rules/` ao teste que a prova, pela etiqueta
-de texto `PRUMO: <id>`. Varre texto, por isso serve para qualquer linguagem.
+Links every invariant declared in `.prumo/regression-rules/` to the test that proves it, through
+the text tag `PRUMO: <id>`. It scans plain text, so it works for any language.
 
-Declarar uma invariante, numa linha de lista markdown:
+Declare an invariant as one markdown list line. The status keywords are Portuguese and are
+matched literally: `ACTIVA` (active), `REVOGADA` (revoked), `ABERTA` (open).
 
 ```markdown
-- `BIZ-03` : **ACTIVA** : o preço nunca é negativo
-- `BIZ-02` : **REVOGADA 2026-09-18 (Daniel)** : texto
-- `BIZ-07` : **ABERTA** (issue #3) : texto
+- `BIZ-03` : **ACTIVA** : price is never negative
+- `BIZ-02` : **REVOGADA 2026-09-18 (Daniel)** : text
+- `BIZ-07` : **ABERTA** (issue #3) : text
 ```
 
-Marcar o teste que a prova, em qualquer ficheiro de código ou CI:
+Tag the test that proves it, in any code or CI file:
 
 ```rust
 // PRUMO: BIZ-03
 #[test]
-fn preco_nunca_negativo() { ... }
+fn price_never_negative() { ... }
 ```
 
-Contrato verificado:
+Contract checked:
 
-- invariante ACTIVA tem pelo menos uma etiqueta fora da prosa;
-- invariante REVOGADA não tem etiqueta (um guarda a defender uma regra morta bloqueia o negócio);
-- invariante ABERTA cita uma issue e ainda não tem etiqueta;
-- nenhuma etiqueta cita um id que as regras não declaram;
-- nenhum id é declarado duas vezes;
-- ficheiro de regras sem invariantes é erro (verificador cego não diz OK).
+- an ACTIVA invariant has at least one tag outside prose;
+- a REVOGADA invariant has no tag (a guard defending a dead rule blocks the business);
+- an ABERTA invariant cites an issue and has no tag yet;
+- no tag cites an id the rules do not declare;
+- no id is declared twice;
+- a rules file with no invariants is an error (a blind checker does not get to say OK).
 
 ```sh
-bin/prumo-trace --root /caminho/do/repo
+bin/prumo-trace --root /path/to/repo
 ```
 
-Sai 0 conforme, 1 violação, 2 erro de uso.
+Exits 0 when compliant, 1 on a violation, 2 on a usage error.
 
-**Limite:** a etiqueta prova que existe um teste apontado à regra, não que o teste passa nem
-que morde. Isso é trabalho do runner de testes e de mutação.
+**Limit:** a tag proves that a test points at the rule, not that the test passes or that it
+bites. That is the job of the test runner and of mutation testing.
 
-## Desenvolvimento
+## Development
 
 ```sh
-make test     # corre tests/run.sh; zero casos corridos é falha
-make trace    # corre o prumo-trace sobre este repo
+make test     # runs tests/run.sh; zero cases run counts as a failure
+make trace    # runs prumo-trace over this repo
 ```
 
-Requer apenas `bash` e `python3` (stdlib).
+Needs only `bash` and `python3` (stdlib).
 
-## Licença
+## License
 
 MIT, Daniel Carneiro.
