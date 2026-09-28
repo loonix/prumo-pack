@@ -71,7 +71,8 @@ script_refs_resolve() {
 import os, re, sys
 root, rel, pending = sys.argv[1], sys.argv[2], set(sys.argv[3].split())
 text = open(os.path.join(root, rel)).read()
-refs = sorted(set(re.findall(r"(?<![A-Za-z0-9_.-])((?:bin|checks)/[A-Za-z0-9_.-]+)", text)))
+# A dot that ends a sentence is not part of the path.
+refs = sorted(set(r.rstrip(".") for r in re.findall(r"(?<![A-Za-z0-9_.-])((?:bin|checks)/[A-Za-z0-9_.-]+)", text)))
 bad = [r for r in refs if not os.path.exists(os.path.join(root, r)) and r not in pending]
 for r in bad:
     print("unknown script path: " + r)
