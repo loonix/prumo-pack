@@ -107,7 +107,7 @@ if node "$DOM" --probe "$M" >/dev/null 2>&1; then
     "$C" --base-url "$URL" --manifest "$M/frontend.json"
   check_output "text hidden by CSS is not visible text" 1 "Hidden launch promo" \
     "$C" --base-url "$URL" --manifest "$M/frontend-hidden.json"
-  check_output "a console error fails the page" 1 "console error" \
+  check_output "a console error fails the page" 1 "console error: example failure on load" \
     "$C" --base-url "$URL" --manifest "$M/frontend-console-error.json"
 else
   for n in "visible text passes" "hidden text fails" "console error fails"; do
