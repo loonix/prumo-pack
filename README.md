@@ -1,7 +1,5 @@
 # prumo-pack
 
-**English** | [Português](README.pt.md)
-
 The Prumo gates, packaged to install in any repository (GitLab, GitHub or anything else).
 One source, N consumers, instead of scripts copied by hand between projects.
 
