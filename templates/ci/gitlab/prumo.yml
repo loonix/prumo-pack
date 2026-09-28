@@ -7,6 +7,8 @@
 #
 #   variables:
 #     PRUMO_FAIL_CLOSED_DIRS: "src services"   # optional, default "."
+#     PRUMO_ANTI_LEAK: "on"                     # optional, default "off"
+#     PRUMO_ANTI_LEAK_ARGS: "--exclude tests/fixtures ."   # default "."
 #
 # Each job clones the pack at PRUMO_PACK_REF (a tag, branch or commit sha) into
 # a directory outside the project, so the pack's own fixtures are never scanned
@@ -16,6 +18,10 @@
 # The consuming project needs .prumo/regression-rules/ (prumo-trace) and
 # .prumo/subsystems.yml (metabolic). Both checks fail when the declarations are
 # missing: a checker that checked nothing does not get to say OK.
+#
+# prumo-anti-leak is opt in: it only exists in the pipeline when
+# PRUMO_ANTI_LEAK is "on". Its default deny list is .prumo/anti-leak.sha256 in
+# the scanned directory. Once on, it blocks like the other jobs.
 #
 # Deploy jobs must `needs:` every test job, the Prumo jobs included, so a red
 # gate blocks the deploy instead of running beside it. Pattern:
@@ -27,6 +33,8 @@
 #       - job: prumo-trace
 #       - job: prumo-fail-closed
 #       - job: prumo-metabolic
+#       - job: prumo-anti-leak
+#         optional: true             # absent from the pipeline while PRUMO_ANTI_LEAK is "off"
 #     script:
 #       - ./deploy.sh --dry-run      # the same path as the real deploy, no side effects
 #
@@ -41,6 +49,8 @@ variables:
   PRUMO_PACK_REF: "v0"
   PRUMO_PACK_DIR: "/tmp/prumo-pack"
   PRUMO_FAIL_CLOSED_DIRS: "."
+  PRUMO_ANTI_LEAK: "off"
+  PRUMO_ANTI_LEAK_ARGS: "."
   PRUMO_IMAGE: "python:3.12"
 
 .prumo-base:
@@ -68,3 +78,11 @@ prumo-metabolic:
   extends: .prumo-base
   script:
     - '"$PRUMO_PACK_DIR/checks/metabolic.sh" .'
+
+prumo-anti-leak:
+  extends: .prumo-base
+  rules:
+    - if: '$PRUMO_ANTI_LEAK == "on"'
+  script:
+    # Space separated arguments; globbing is off so they are taken literally.
+    - set -f; "$PRUMO_PACK_DIR/checks/anti-leak.sh" $PRUMO_ANTI_LEAK_ARGS
