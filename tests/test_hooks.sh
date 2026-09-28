@@ -197,4 +197,82 @@ check_output "Bash without command blocks" 2 "cannot read" hook protected_push.p
 check_output "bare push outside a repository blocks (branch unknown)" 2 "cannot determine" push "git push" "$NOREPO"
 check_output "unbalanced quotes block" 2 "cannot parse" push "git push origin 'main"
 
+# ci <Write|Edit> <path> <new text> [old text]: runs the CI hook, JSON built by python.
+ci() {
+  python3 -c '
+import json, sys
+tool, path, new = sys.argv[1], sys.argv[2], sys.argv[3]
+old = sys.argv[4] if len(sys.argv) > 4 else ""
+ti = {"file_path": path, "content": new} if tool == "Write" else {"file_path": path, "old_string": old, "new_string": new}
+print(json.dumps({"session_id": "t", "cwd": "/", "hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": ti}))
+' "$@" | python3 "$H/ci_soft_fail.py"
+}
+SOFT='test:
+  script: make test
+  allow_failure: true
+'
+HARD='test:
+  script: make test
+  allow_failure: false
+'
+CI="$(tmpdir)"
+printf '%s' "$SOFT" >"$CI/.gitlab-ci.yml"
+
+echo "ci hook: wiring"
+check_output "Write routes to the CI hook" 0 "routes to" plugin_check routes:Write:ci_soft_fail.py
+check_output "Edit routes to the CI hook" 0 "routes to" plugin_check routes:Edit:ci_soft_fail.py
+check_output "MultiEdit routes to the CI hook" 0 "routes to" plugin_check routes:MultiEdit:ci_soft_fail.py
+
+echo "ci hook: blocks"
+check_output "Write .gitlab-ci.yml with allow_failure: true is blocked" 2 "allow_failure" \
+  ci Write /r/.gitlab-ci.yml "$SOFT"
+check_output "the reason names the file" 2 "/r/.gitlab-ci.yml" ci Write /r/.gitlab-ci.yml "$SOFT"
+check_output "an included *.gitlab-ci.yml is guarded" 2 "allow_failure" \
+  ci Write /r/ci/lint.gitlab-ci.yml "$SOFT"
+check_output "quoted \"true\" is blocked" 2 "allow_failure" \
+  ci Write /r/.gitlab-ci.yml 'test: { script: x, allow_failure: "true" }'
+check_output "Edit introducing allow_failure: true is blocked" 2 "allow_failure" \
+  ci Edit /r/.gitlab-ci.yml "  allow_failure: true" "  allow_failure: false"
+check_output "workflow .yml with continue-on-error: true is blocked" 2 "continue-on-error" \
+  ci Write /r/.github/workflows/ci.yml 'jobs:
+  t:
+    continue-on-error: true
+'
+check_output "workflow .yaml is guarded" 2 "continue-on-error" \
+  ci Write /r/.github/workflows/ci.yaml '    continue-on-error: true'
+check_output "continue-on-error from an expression is blocked" 2 "continue-on-error" \
+  ci Write /r/.github/workflows/ci.yml '    continue-on-error: ${{ matrix.experimental }}'
+check_output "Write adding a second soft fail over an existing file is blocked" 2 "allow_failure" \
+  ci Write "$CI/.gitlab-ci.yml" "$SOFT$SOFT"
+check_output "MultiEdit introducing a soft fail is blocked" 2 "allow_failure" \
+  hook ci_soft_fail.py '{"tool_name":"MultiEdit","tool_input":{"file_path":"/r/.gitlab-ci.yml","edits":[{"old_string":"a","new_string":"b"},{"old_string":"c","new_string":"allow_failure: true"}]}}'
+
+echo "ci hook: allows"
+check "allow_failure: false passes" 0 ci Write /r/.gitlab-ci.yml "$HARD"
+check "a commented soft fail passes" 0 ci Write /r/.gitlab-ci.yml '# allow_failure: true
+test:
+  script: make test # continue-on-error: true
+'
+check "other YAML files are not guarded" 0 ci Write /r/config.yml "$SOFT"
+check "a non-YAML file under workflows is not guarded" 0 ci Write /r/.github/workflows/README.md "$SOFT"
+check "Edit keeping an existing soft fail passes (nothing introduced)" 0 \
+  ci Edit /r/.gitlab-ci.yml "  script: make check
+  allow_failure: true" "  script: make test
+  allow_failure: true"
+check "Edit removing a soft fail passes" 0 ci Edit /r/.gitlab-ci.yml "  allow_failure: false" "  allow_failure: true"
+check "Write rewriting a file that already had it passes (nothing introduced)" 0 \
+  ci Write "$CI/.gitlab-ci.yml" "$SOFT"
+check "allow_failure with exit_codes is not a blanket soft fail" 0 ci Write /r/.gitlab-ci.yml 'test:
+  allow_failure:
+    exit_codes: 137
+'
+check "a tool it does not guard passes" 0 hook ci_soft_fail.py '{"tool_name":"Read","tool_input":{"file_path":"/r/.gitlab-ci.yml"}}'
+
+echo "ci hook: fails closed"
+check_output "malformed JSON blocks" 2 "cannot read" hook ci_soft_fail.py '{"tool_name":"Write"'
+check_output "Write of .gitlab-ci.yml without content blocks" 2 "cannot read" \
+  hook ci_soft_fail.py '{"tool_name":"Write","tool_input":{"file_path":"/r/.gitlab-ci.yml"}}'
+check_output "Write without file_path blocks" 2 "cannot read" \
+  hook ci_soft_fail.py '{"tool_name":"Write","tool_input":{"content":"allow_failure: true"}}'
+
 finish
