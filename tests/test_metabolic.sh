@@ -19,6 +19,11 @@ mkdir -p "$D/.prumo" "$D/src/billing"
 printf 'roots: [src]\nsubsystems:\n  - name: billing\n    path: src/billing\n    usage_metric: invoices per day\nthis is not yaml\n' \
   >"$D/.prumo/subsystems.yml"
 check_output "unparsable line fails" 1 "cannot parse line 6" "$C" "$D"
+D="$(tmpdir)"
+mkdir -p "$D/.prumo" "$D/src/billing"
+printf 'roots: [src]\nsubsystems:\n  - name: billing\n    path: src/billing\n    usage_metric: TODO: decide later\n' \
+  >"$D/.prumo/subsystems.yml"
+check_output "usage_metric starting with TODO fails" 1 "placeholder" "$C" "$D"
 
 echo "good cases"
 check_output "compliant repository passes" 0 "2 subsystem(s) declared" "$C" "$F/good"
