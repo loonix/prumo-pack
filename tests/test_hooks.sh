@@ -122,4 +122,79 @@ check_output "Write without content blocks" 2 "cannot read" \
 check_output "MultiEdit with edits not a list blocks" 2 "cannot read" \
   hook no_em_dash.py '{"tool_name":"MultiEdit","tool_input":{"file_path":"/r/a.md","edits":"x"}}'
 
+# push <command> [cwd]: runs the push hook on a Bash call, JSON built by python.
+push() {
+  python3 -c 'import json,sys; print(json.dumps({"session_id":"t","cwd":sys.argv[2],"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":sys.argv[1],"description":"t"}}))' \
+    "$1" "${2:-/}" | python3 "$H/protected_push.py"
+}
+
+# repo <branch> [upstream]: a scratch repository checked out on <branch>.
+repo() {
+  local d
+  d="$(tmpdir)"
+  git init -q "$d"
+  git -C "$d" symbolic-ref HEAD "refs/heads/$1"
+  if [ -n "${2:-}" ]; then
+    git -C "$d" config "branch.$1.remote" origin
+    git -C "$d" config "branch.$1.merge" "refs/heads/$2"
+  fi
+  printf '%s' "$d"
+}
+MAIN="$(repo main)"
+FEATURE="$(repo feature/x)"
+TRACKS_MAIN="$(repo feature/y main)"
+NOREPO="$(tmpdir)"
+
+echo "push hook: wiring"
+check_output "Bash routes to the push hook" 0 "routes to" plugin_check routes:Bash:protected_push.py
+
+echo "push hook: blocks"
+check_output "git push origin main is blocked" 2 "main" push "git push origin main"
+check_output "git push origin master is blocked" 2 "master" push "git push origin master"
+check_output "git push origin develop is blocked" 2 "develop" push "git push origin develop"
+check_output "HEAD:main is blocked" 2 "main" push "git push origin HEAD:main"
+check_output "force refspec +main is blocked" 2 "main" push "git push origin +main"
+check_output "src:refs/heads/master is blocked" 2 "master" push "git push origin feature:refs/heads/master"
+check_output "-f origin develop is blocked" 2 "develop" push "git push -f origin develop"
+check_output "deleting main with :main is blocked" 2 "main" push "git push origin :main"
+check_output "--delete main is blocked" 2 "main" push "git push origin --delete main"
+check_output "second refspec main is blocked" 2 "main" push "git push -u origin feature main"
+check_output "push after && is blocked" 2 "main" push "make test && git push origin main"
+check_output "push on its own line is blocked" 2 "main" push "git status
+git push origin main"
+check_output "git -C dir push is blocked" 2 "main" push "git -C /tmp push origin main"
+check_output "push inside bash -c is blocked" 2 "main" push "bash -c 'git push origin main'"
+check_output "--all is blocked (pushes every branch)" 2 "--all" push "git push --all origin"
+check_output "--mirror is blocked" 2 "--mirror" push "git push --mirror origin"
+check_output "wildcard refspec that covers main is blocked" 2 "main" push "git push origin 'refs/heads/*:refs/heads/*'"
+check_output "unresolvable \$BRANCH is blocked" 2 "cannot resolve" push 'git push origin $BRANCH'
+check_output "bare git push on main is blocked" 2 "main" push "git push" "$MAIN"
+check_output "git push origin with no refspec on main is blocked" 2 "main" push "git push origin" "$MAIN"
+check_output "git push origin HEAD on main is blocked" 2 "main" push "git push origin HEAD" "$MAIN"
+check_output "cd into a repo on main then bare push is blocked" 2 "main" push "cd $MAIN && git push" "/"
+check_output "bare push of a branch whose upstream is main is blocked" 2 "main" push "git push" "$TRACKS_MAIN"
+PRUMO_PROTECTED_BRANCHES="release, main" \
+  check_output "PRUMO_PROTECTED_BRANCHES adds a branch" 2 "release" push "git push origin release"
+
+echo "push hook: allows"
+check "push to a feature branch passes" 0 push "git push origin feature/x"
+check "push -u origin HEAD on a feature branch passes" 0 push "git push -u origin HEAD" "$FEATURE"
+check "bare git push on a feature branch passes" 0 push "git push" "$FEATURE"
+check "main:feature pushes to feature and passes" 0 push "git push origin main:feature"
+check "maintenance is not main" 0 push "git push origin maintenance"
+check "pushing a tag passes" 0 push "git push origin v1.0"
+check "--dry-run to main passes (the remote is not touched)" 0 push "git push --dry-run origin main"
+check "-n to main passes" 0 push "git push -n origin main"
+check "git pull origin main passes" 0 push "git pull origin main"
+check "a commit message mentioning git push origin main passes" 0 push "git commit -m 'then git push origin main'"
+check "a command without git passes" 0 push "ls -la"
+PRUMO_PROTECTED_BRANCHES="release" \
+  check "PRUMO_PROTECTED_BRANCHES replaces the default list" 0 push "git push origin main"
+
+echo "push hook: fails closed"
+check_output "malformed JSON blocks" 2 "cannot read" hook protected_push.py '{"tool_name":"Bash","tool_input":'
+check_output "Bash without command blocks" 2 "cannot read" hook protected_push.py '{"tool_name":"Bash","tool_input":{}}'
+check_output "bare push outside a repository blocks (branch unknown)" 2 "cannot determine" push "git push" "$NOREPO"
+check_output "unbalanced quotes block" 2 "cannot parse" push "git push origin 'main"
+
 finish
