@@ -1,0 +1,4 @@
+#!/bin/sh
+# Prumo live certifier. See lib/prumo_certify.py.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+exec python3 "$HERE/../lib/prumo_certify.py" "$@"
