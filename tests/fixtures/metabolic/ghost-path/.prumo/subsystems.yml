@@ -1,0 +1,8 @@
+roots: [src]
+subsystems:
+  - name: billing
+    path: src/billing
+    usage_metric: invoices created per day
+  - name: legacy
+    path: src/legacy
+    usage_metric: legacy imports per day

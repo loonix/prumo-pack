@@ -1,0 +1,11 @@
+# Every subsystem declares how its usage is measured, or it does not grow.
+roots: [src]
+subsystems:
+  - name: billing
+    path: src/billing
+    usage_metric: "invoices created per day (table invoices, column created_at)"
+    since: 2026-09-01
+  - name: search
+    path: src/search/
+    usage_metric: search requests per day in the access log
+    since: 2026-09-10

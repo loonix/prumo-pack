@@ -1,0 +1,10 @@
+roots:
+  - src
+  - services
+subsystems:
+  - name: api
+    path: src/api
+    usage_metric: requests per day per route
+  - name: mailer
+    path: services/mailer
+    usage_metric: emails sent per day

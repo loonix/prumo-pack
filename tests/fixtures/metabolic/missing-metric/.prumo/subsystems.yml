@@ -1,0 +1,7 @@
+roots: [src]
+subsystems:
+  - name: billing
+    path: src/billing
+    usage_metric: invoices created per day
+  - name: voice
+    path: src/voice

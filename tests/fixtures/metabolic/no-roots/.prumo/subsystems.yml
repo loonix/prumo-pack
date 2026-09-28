@@ -1,0 +1,4 @@
+subsystems:
+  - name: billing
+    path: src/billing
+    usage_metric: invoices created per day

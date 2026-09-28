@@ -1,0 +1,5 @@
+roots: [src]
+subsystems:
+  - name: everything
+    path: src
+    usage_metric: requests per day
