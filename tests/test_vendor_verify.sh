@@ -27,8 +27,8 @@ manifest() {
       if [ -x "$d/$f" ]; then mode=755; else mode=644; fi
       echo "file $(sha "$d/$f") $mode $f"
     done
-  } >"$d/MANIFEST.tmp"
-  mv "$d/MANIFEST.tmp" "$d/MANIFEST"
+  } >"$d.MANIFEST.tmp"
+  mv "$d.MANIFEST.tmp" "$d/MANIFEST"
 }
 
 # vendor: a vendor directory with the verifier, two scripts and a library file,
