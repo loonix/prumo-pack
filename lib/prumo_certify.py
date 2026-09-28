@@ -85,7 +85,7 @@ KEYS = {
                  "expect_body_contains"}, {"name", "method", "path", "expect_status"}),
     "frontend": ({"name", "path", "expect_text", "expect_absent", "expect_visible_selector",
                   "expect_image_loaded"},
-                 {"name", "path", "expect_text"}),
+                 {"name", "path"}),
 }
 # Frontend assertions, each a list of non-empty strings, passed to the DOM runner.
 FRONTEND_LISTS = ("expect_text", "expect_absent", "expect_visible_selector",
@@ -247,6 +247,10 @@ def validate_frontend(e, where, errors):
         if k in e and (not isinstance(t, list) or not t
                        or not all(isinstance(x, str) and x for x in t)):
             errors.append("%s: %s must be a non-empty list of non-empty strings" % (where, k))
+    # expect_text is optional, but a page that asserts nothing proves nothing.
+    if not any(k in e for k in FRONTEND_LISTS):
+        errors.append("%s: declares no assertion, give at least one of %s"
+                      % (where, ", ".join(FRONTEND_LISTS)))
 
 
 # ---------------------------------------------------------------- http
