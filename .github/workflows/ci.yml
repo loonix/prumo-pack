@@ -1,0 +1,40 @@
+# The pack's own CI. Every step runs even when an earlier one failed, so one
+# red run shows every broken gate, and the job still fails if any step did.
+# No continue-on-error.
+
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: test
+        run: make test
+
+      - name: trace
+        if: ${{ !cancelled() }}
+        run: |
+          if [ -d .prumo ]; then
+            make trace
+          else
+            echo "SKIP make trace: this repository has no .prumo/, so there is nothing declared to trace."
+          fi
+
+      - name: fail-closed
+        if: ${{ !cancelled() }}
+        run: make fail-closed
+
+      # The pack's fixtures contain addresses on purpose; the Makefile target
+      # carries the hashed deny list and the fixture excludes.
+      - name: anti-leak
+        if: ${{ !cancelled() }}
+        run: make leak
