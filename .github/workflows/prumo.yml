@@ -1,0 +1,114 @@
+# Prumo gates as a GitHub reusable workflow.
+#
+# Call it from the consuming repository (see templates/ci/github/prumo.yml):
+#
+#   jobs:
+#     prumo:
+#       uses: loonix/prumo-pack/.github/workflows/prumo.yml@v0
+#       with:
+#         pack_ref: v0
+#
+# Keep the ref after @ and pack_ref equal: the first picks this file, the
+# second picks the scripts it runs.
+#
+# The caller is checked out into project/ and the pack into prumo-pack/, side by
+# side, so the pack's own fixtures are never scanned as project code. No job
+# has continue-on-error: a gate that may fail without failing the run is a log
+# line, not a gate. Deploy jobs in the caller must `needs:` this job.
+
+name: prumo
+
+on:
+  workflow_call:
+    inputs:
+      fail_closed_dirs:
+        description: Space separated directories for checks/fail-closed.sh, relative to the repository root.
+        type: string
+        required: false
+        default: "."
+      pack_ref:
+        description: Tag, branch or commit of loonix/prumo-pack whose scripts run.
+        type: string
+        required: false
+        default: "v0"
+      anti_leak:
+        description: Run checks/anti-leak.sh (opt in; needs the project's deny list first).
+        type: boolean
+        required: false
+        default: false
+      anti_leak_args:
+        description: Space separated arguments for checks/anti-leak.sh.
+        type: string
+        required: false
+        default: "."
+
+permissions:
+  contents: read
+
+jobs:
+  prumo-trace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: project
+      - uses: actions/checkout@v4
+        with:
+          repository: loonix/prumo-pack
+          ref: ${{ inputs.pack_ref }}
+          path: prumo-pack
+      - name: prumo-trace
+        working-directory: project
+        run: ../prumo-pack/bin/prumo-trace --root .
+
+  prumo-fail-closed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: project
+      - uses: actions/checkout@v4
+        with:
+          repository: loonix/prumo-pack
+          ref: ${{ inputs.pack_ref }}
+          path: prumo-pack
+      - name: fail-closed
+        working-directory: project
+        env:
+          DIRS: ${{ inputs.fail_closed_dirs }}
+        # Passed through env, never interpolated into the script. Globbing is
+        # off so the names are taken literally.
+        run: set -f; ../prumo-pack/checks/fail-closed.sh $DIRS
+
+  prumo-metabolic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: project
+      - uses: actions/checkout@v4
+        with:
+          repository: loonix/prumo-pack
+          ref: ${{ inputs.pack_ref }}
+          path: prumo-pack
+      - name: metabolic
+        working-directory: project
+        run: ../prumo-pack/checks/metabolic.sh .
+
+  prumo-anti-leak:
+    if: inputs.anti_leak
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: project
+      - uses: actions/checkout@v4
+        with:
+          repository: loonix/prumo-pack
+          ref: ${{ inputs.pack_ref }}
+          path: prumo-pack
+      - name: anti-leak
+        working-directory: project
+        env:
+          ARGS: ${{ inputs.anti_leak_args }}
+        run: set -f; ../prumo-pack/checks/anti-leak.sh $ARGS

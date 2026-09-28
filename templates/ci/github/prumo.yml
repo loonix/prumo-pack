@@ -1,0 +1,20 @@
+# Prumo gates for a GitHub repository. Copy to .github/workflows/prumo.yml.
+#
+# The repository needs .prumo/regression-rules/ (prumo-trace) and
+# .prumo/subsystems.yml (metabolic); both checks fail without them.
+# Keep the ref after @ and pack_ref equal. Deploy jobs must `needs: [prumo]`.
+
+name: prumo
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  prumo:
+    uses: loonix/prumo-pack/.github/workflows/prumo.yml@v0
+    with:
+      pack_ref: v0
+      fail_closed_dirs: "."
+      anti_leak: false
+      anti_leak_args: "."
