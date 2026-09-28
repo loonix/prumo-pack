@@ -18,7 +18,8 @@ Manifest (prumo-certify.json by default), English keys, every layer optional:
 
   {
     "files":    [ {"local": "web/index.html", "url": "/index.html"},
-                  {"local_dir": "web", "url_prefix": "/"} ],
+                  {"local_dir": "web", "url_prefix": "/",
+                   "private_prefixes": ["/legal/"]} ],
     "backend":  [ {"name": "...", "method": "POST", "path": "/api/items",
                    "headers": {"Authorization": "Bearer ${API_TOKEN}"},
                    "body": {...}, "expect_status": 400,
@@ -27,6 +28,9 @@ Manifest (prumo-certify.json by default), English keys, every layer optional:
   }
 
 Local paths are relative to the manifest. Keys starting with "_" are comments.
+A local_dir file whose url starts with one of its private_prefixes is not
+compared: the site must answer 404 for it, any other status fails. A private
+prefix that matches no file under its local_dir is a manifest error.
 "${NAME}" in a path, header value or body string is read from the environment;
 an unset variable fails the check instead of sending an empty secret.
 
@@ -60,7 +64,7 @@ TIMEOUT = 30
 DOM_RUNNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prumo_certify_dom.mjs")
 LAYERS = ("files", "backend", "frontend")
 KEYS = {
-    "files": ({"local", "url", "local_dir", "url_prefix"}, set()),
+    "files": ({"local", "url", "local_dir", "url_prefix", "private_prefixes"}, set()),
     "backend": ({"name", "method", "path", "body", "headers", "expect_status",
                  "expect_body_contains"}, {"name", "method", "path", "expect_status"}),
     "frontend": ({"name", "path", "expect_text"}, {"name", "path", "expect_text"}),
@@ -147,18 +151,25 @@ def expand_files(e, where, base, errors):
         errors.append("%s: declare exactly one of local or local_dir" % where)
         return []
     if "local" in e:
-        if "url_prefix" in e:
-            errors.append("%s: url_prefix goes with local_dir, not local" % where)
+        for k in ("url_prefix", "private_prefixes"):
+            if k in e:
+                errors.append("%s: %s goes with local_dir, not local" % (where, k))
         if not check_url_path(e.get("url"), where, "url", errors):
             return []
         if not isinstance(e["local"], str):
             errors.append("%s: local must be a string" % where)
             return []
-        return [(os.path.join(base, e["local"]), e["url"])]
+        return [(os.path.join(base, e["local"]), e["url"], False)]
     if "url" in e:
         errors.append("%s: url goes with local, not local_dir" % where)
     prefix = e.get("url_prefix", "/")
     if not isinstance(e["local_dir"], str) or not check_url_path(prefix, where, "url_prefix", errors):
+        return []
+    private = e.get("private_prefixes", [])
+    if "private_prefixes" in e and (not isinstance(private, list) or not private or not all(
+            isinstance(p, str) and p.startswith("/") for p in private)):
+        errors.append("%s: private_prefixes must be a non-empty list of strings starting with /"
+                      % where)
         return []
     root = os.path.join(base, e["local_dir"])
     if not os.path.isdir(root):
@@ -170,10 +181,15 @@ def expand_files(e, where, base, errors):
         for f in sorted(files):
             full = os.path.join(d, f)
             rel = os.path.relpath(full, root).replace(os.sep, "/")
-            found.append((full, prefix.rstrip("/") + "/" + rel))
+            url = prefix.rstrip("/") + "/" + rel
+            found.append((full, url, any(url.startswith(p) for p in private)))
     if not found:
         errors.append("%s: local_dir %s holds zero files, nothing to compare"
                       % (where, e["local_dir"]))
+    for p in private:
+        if found and not any(url.startswith(p) for _, url, _ in found):
+            errors.append("%s: private prefix %s matches no file under local_dir %s, "
+                          "nothing would be checked" % (where, p, e["local_dir"]))
     return found
 
 
@@ -262,7 +278,19 @@ class Tally:
 
 
 def run_files(base_url, files, tally):
-    for local, url in files:
+    for local, url, private in files:
+        if private:
+            try:
+                status, _ = fetch(base_url + url)
+            except OSError as e:
+                tally.record("failed", "files", url, unreachable(e))
+                continue
+            if status == 404:
+                tally.record("passed", "files", url, "private, 404")
+            else:
+                tally.record("failed", "files", url,
+                             "served HTTP %d, a private path must answer 404" % status)
+            continue
         if not os.path.isfile(local):
             tally.record("failed", "files", url, "local file %s does not exist" % local)
             continue

@@ -39,6 +39,14 @@ check_output "a missing local file fails" 1 "missing.html" \
 check_output "a served 404 is not parity" 1 "404" \
   "$C" --base-url "$URL/nothing-here" --manifest "$M/parity-pass.json"
 
+echo "private prefixes"
+check_output "a build file under a private prefix answering 404 passes" 0 "1 passed, 0 failed" \
+  "$C" --base-url "$URL" --manifest "$M/private-pass.json"
+check_output "a private file the site serves fails and is named" 1 "/app.js (served HTTP 200, a private path must answer 404)" \
+  "$C" --base-url "$URL" --manifest "$M/private-exposed.json"
+check_output "a private prefix matching no build file fails (nothing checked)" 1 "private prefix /legal/ matches no file" \
+  "$C" --base-url "$URL" --manifest "$M/private-no-match.json"
+
 echo "live back end"
 check_output "requests answered as declared pass" 0 "4 passed, 0 failed" \
   "$C" --base-url "$URL" --manifest "$M/backend-pass.json"
