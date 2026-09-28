@@ -13,27 +13,27 @@ check_output "ACTIVE without tag fails" 1 "SEC-02" "$T" --root "$F/active-withou
 # PRUMO: PACK-02
 check_output "tag citing an undeclared id fails" 1 "DATA-04" "$T" --root "$F/undeclared-id"
 # PRUMO: PACK-03
-check_output "REVOKED with a live guard fails" 1 "BIZ-02 ainda guardada" "$T" --root "$F/revoked-with-tag"
+check_output "REVOKED with a live guard fails" 1 "BIZ-02 still guarded" "$T" --root "$F/revoked-with-tag"
 # PRUMO: PACK-04
-check_output "OPEN without issue fails" 1 "OPEN sem issue" "$T" --root "$F/open-without-issue"
-check_output "OPEN with proof fails" 1 "BIZ-07 ja provada" "$T" --root "$F/open-with-proof"
-check_output "invariant without status fails" 1 "nao declara estado" "$T" --root "$F/no-status"
-check_output "id declared twice fails (even across files)" 1 "SEC-01 declarada" "$T" --root "$F/duplicate-id"
-check_output "rules with no invariant fail (blind checker)" 1 "nao declaram invariante nenhuma" "$T" --root "$F/no-invariants"
-check_output "no rules file fails" 1 "nenhum ficheiro de regras" "$T" --root "$F/no-rules"
+check_output "OPEN without issue fails" 1 "OPEN without an issue" "$T" --root "$F/open-without-issue"
+check_output "OPEN with proof fails" 1 "BIZ-07 already proven" "$T" --root "$F/open-with-proof"
+check_output "invariant without status fails" 1 "declares no status" "$T" --root "$F/no-status"
+check_output "id declared twice fails (even across files)" 1 "SEC-01 declared in" "$T" --root "$F/duplicate-id"
+check_output "rules with no invariant fail (blind checker)" 1 "declare no invariant at all" "$T" --root "$F/no-invariants"
+check_output "no rules file fails" 1 "no rules file" "$T" --root "$F/no-rules"
 check "missing root fails" 2 "$T" --root "$F/does-not-exist"
 
 echo "good case"
-check_output "compliant repository passes" 0 "5 declaradas" "$T" --root "$F/good"
+check_output "compliant repository passes" 0 "5 declared" "$T" --root "$F/good"
 check_output "prose, docs/ and node_modules/ do not count as tags" 0 "OK" "$T" --root "$F/good"
 check "trace-ignore excludes declared paths" 0 "$T" --root "$F/ignored"
 
 echo "id parser (ported from o_parser_de_ids_aceita_o_que_a_rr_001_usa_e_recusa_prosa)"
 for good in SEC-01 BIZ-04b TIER-03 OPS-02 DATA-01 FISC-05; do
-  check "accepts $good" 0 "$T" --id-valido "$good"
+  check "accepts $good" 0 "$T" --valid-id "$good"
 done
 for bad in sec-01 SE-01 BIZ- BIZ-x BIZ-04bb RR-001 -01 BIZ01; do
-  check "rejects $bad" 1 "$T" --id-valido "$bad"
+  check "rejects $bad" 1 "$T" --valid-id "$bad"
 done
 
 echo "legacy format compatibility (em dash and Portuguese statuses, generated here)"
@@ -48,6 +48,6 @@ D="$(tmpdir)"
 mkdir -p "$D/.prumo/regression-rules" "$D/src"
 printf -- '- `BIZ-07` : **ABERTA** (issue #3) : legacy\n' >"$D/.prumo/regression-rules/RR-001-core-invariants.md"
 printf '# PRUMO: BIZ-07\n' >"$D/src/t.sh"
-check_output "legacy ABERTA counts as OPEN" 1 "BIZ-07 ja provada" "$T" --root "$D"
+check_output "legacy ABERTA counts as OPEN" 1 "BIZ-07 already proven" "$T" --root "$D"
 
 finish
