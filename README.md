@@ -12,9 +12,9 @@ real project.
 
 | Piece | Status |
 |---|---|
-| `bin/prumo-trace` | Works, 28 tests |
-| `checks/fail-closed.sh` | In progress |
-| `checks/metabolic.sh` | Not started |
+| `bin/prumo-trace` | Works, 31 tests |
+| `checks/fail-closed.sh` | Works, 12 tests |
+| `checks/metabolic.sh` | Works, 19 tests |
 | `bin/prumo-init` (scaffolds `.prumo/`, idempotent) | Not started |
 | `bin/prumo-certify` (file parity, live back end, rendered DOM) | Not started |
 | CI templates (GitLab `include:`, GitHub reusable workflow) | Not started |
@@ -59,11 +59,63 @@ Exits 0 when compliant, 1 on a violation, 2 on a usage error.
 **Limit:** a tag proves that a test points at the rule, not that the test passes or that it
 bites. That is the job of the test runner and of mutation testing.
 
+## checks/fail-closed.sh
+
+A missing protection must refuse to start, never log a warning and carry on. The check flags
+any line in production code that contains a warning call (anything matching `warn`) and a
+degradation phrase (`running without`, `degraded mode`, `skipping auth`, `sem sandbox`, ...).
+Add project phrases to `<dir>/.prumo/fail-closed.patterns`, one extended regex per line.
+Tests, `docs/`, prose files and vendored directories are not scanned.
+
+```sh
+checks/fail-closed.sh src services     # default: .
+```
+
+Exits 0 when compliant, 1 on a finding or when zero files were scanned, 2 when a directory
+does not exist.
+
+**Limit:** line based and phrase based. A warning whose message sits on the next line, a
+degradation logged at info level, or a phrase not in the list is not seen.
+
+## checks/metabolic.sh
+
+Every subsystem declares how its usage is measured, or it does not grow. Declare them in
+`.prumo/subsystems.yml`:
+
+```yaml
+roots: [src]
+subsystems:
+  - name: billing
+    path: src/billing
+    usage_metric: invoices created per day (table invoices)
+    since: 2026-09-01
+```
+
+Contract checked:
+
+- every subsystem has `name`, `path` and a `usage_metric` that is not a placeholder
+  (`TODO`, `TBD`, `n/a`, ...);
+- every declared path exists and no name is declared twice;
+- every directory directly under a root is declared, and no subsystem covers a whole root;
+- a missing manifest, no roots, no subsystems, a root with zero directories, an unknown key
+  or an unparsable line is an error.
+
+```sh
+checks/metabolic.sh [--manifest FILE] /path/to/repo
+```
+
+Exits 0 when compliant, 1 on a violation, 2 when the repository root does not exist.
+
+**Limit:** it checks declarations, not usage. It does not read the metric, so it cannot tell
+whether the metric is collected, whether usage is zero, or whether the text describes a real
+measurement. Only directories directly under a root count as subsystems.
+
 ## Development
 
 ```sh
-make test     # runs tests/run.sh; zero cases run counts as a failure
-make trace    # runs prumo-trace over this repo
+make test         # runs tests/run.sh; zero cases run counts as a failure
+make trace        # runs prumo-trace over this repo
+make fail-closed  # runs checks/fail-closed.sh over bin, lib and checks
 ```
 
 Needs only `bash` and `python3` (stdlib).
