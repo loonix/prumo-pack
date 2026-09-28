@@ -1,0 +1,237 @@
+#!/usr/bin/env bash
+# prumo-init: scaffolds .prumo/ in a repository from templates/.prumo/ and wires
+# the Prumo gates into its CI.
+#
+# Never overwrites a file: each template file is created when missing and kept
+# when present, so a second run creates nothing and exits 0.
+#
+# CI is detected from the repository: .gitlab-ci.yml means GitLab, a .github/
+# directory means GitHub, both means both. Installing the gates with no CI to
+# run them is decorative Prumo, so no CI detected is a refusal unless
+# --force-ci says what to do:
+#   gitlab  create or extend .gitlab-ci.yml with the include
+#   github  create .github/workflows/prumo.yml
+#   none    scaffold .prumo/ and wire nothing (prints a warning)
+#
+# GitLab: an include of templates/ci/gitlab/prumo.yml is added, taken from the
+# project named by the CI/CD variable PRUMO_PACK_PROJECT (the path of the
+# GitLab project that hosts prumo-pack, set at project or group level: GitLab
+# does not expand variables declared in .gitlab-ci.yml inside include). An
+# existing block list include gets one more item; any other include form is a
+# refusal with the snippet to add by hand.
+# GitHub: .github/workflows/prumo.yml calls the reusable workflow of the pack.
+#
+# Checks run before any write: a refusal leaves the repository untouched.
+#
+# Usage: bin/prumo-init [--force-ci gitlab|github|none] <repo>
+# Exit:  0 ok, 1 refusal, 2 usage error.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+TEMPLATES="$HERE/../templates/.prumo"
+GITLAB_TEMPLATE="templates/ci/gitlab/prumo.yml"
+GITHUB_REUSABLE="loonix/prumo-pack/.github/workflows/prumo.yml@v0"
+GITHUB_WORKFLOW=".github/workflows/prumo.yml"
+
+usage() {
+  echo "usage: bin/prumo-init [--force-ci gitlab|github|none] <repo>" >&2
+  exit 2
+}
+
+force=""
+repo=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --force-ci)
+      [ "$#" -ge 2 ] || usage
+      case "$2" in
+        gitlab | github | none) force="$2" ;;
+        *)
+          echo "prumo-init: --force-ci takes gitlab|github|none, not '$2'." >&2
+          usage
+          ;;
+      esac
+      shift 2
+      ;;
+    -h | --help)
+      echo "usage: bin/prumo-init [--force-ci gitlab|github|none] <repo>"
+      exit 0
+      ;;
+    -*)
+      echo "prumo-init: unknown flag '$1'." >&2
+      usage
+      ;;
+    *)
+      [ -z "$repo" ] || usage
+      repo="$1"
+      shift
+      ;;
+  esac
+done
+[ -n "$repo" ] || usage
+if [ ! -d "$repo" ]; then
+  echo "prumo-init: repository '$repo' does not exist." >&2
+  exit 2
+fi
+if [ ! -d "$TEMPLATES" ] || [ -z "$(find "$TEMPLATES" -type f | head -1)" ]; then
+  echo "prumo-init: REFUSED, no template files in $TEMPLATES. The pack is incomplete." >&2
+  exit 1
+fi
+
+wire_gitlab=0
+wire_github=0
+case "$force" in
+  gitlab) wire_gitlab=1 ;;
+  github) wire_github=1 ;;
+  none) ;;
+  "")
+    if [ -f "$repo/.gitlab-ci.yml" ]; then wire_gitlab=1; fi
+    if [ -d "$repo/.github" ]; then wire_github=1; fi
+    if [ "$wire_gitlab" = 0 ] && [ "$wire_github" = 0 ]; then
+      echo "prumo-init: REFUSED, no CI detected in $repo (no .gitlab-ci.yml, no .github/)." >&2
+      echo "Gates that no CI runs are decorative Prumo. Pass --force-ci gitlab or" >&2
+      echo "--force-ci github to create the CI file, or --force-ci none to accept it." >&2
+      exit 1
+    fi
+    ;;
+esac
+
+# gitlab <plan|apply> <file>: plan prints the action (create, keep, append,
+# insert) or refuses with exit 1; apply performs it.
+gitlab() {
+  python3 - "$1" "$2" "$GITLAB_TEMPLATE" <<'PY'
+import os
+import re
+import sys
+
+mode, path, template = sys.argv[1], sys.argv[2], sys.argv[3]
+COMMENT = [
+    "# Prumo gates from prumo-pack. PRUMO_PACK_PROJECT is the path of the GitLab",
+    "# project that hosts prumo-pack. Set it as a project or group CI/CD variable:",
+    "# variables declared in this file do not expand inside include.",
+]
+ITEM = [
+    "- project: '$PRUMO_PACK_PROJECT'",
+    "  ref: v0",
+    "  file: " + template,
+]
+SNIPPET = "\n".join(COMMENT + ["include:"] + ["  " + l for l in ITEM]) + "\n"
+
+if not os.path.lexists(path):
+    action, text = "create", ""
+else:
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    lines = text.splitlines()
+    tops = [i for i, l in enumerate(lines) if re.match(r"^include\s*:", l)]
+    if template in text:
+        action = "keep"
+    elif not tops:
+        action = "append"
+    elif len(tops) == 1 and re.match(r"^include\s*:\s*(#.*)?$", lines[tops[0]]):
+        nxt = next((l for l in lines[tops[0] + 1:]
+                    if l.strip() and not l.lstrip().startswith("#")), "")
+        m = re.match(r"^(\s+)-\s", nxt)
+        action = "insert" if m else "refuse"
+    else:
+        action = "refuse"
+    if action == "refuse":
+        print("prumo-init: REFUSED, %s has an include this tool cannot extend safely "
+              "(only a block list of '- ' items is extended). Merge this snippet into it by hand "
+              "and run again:\n\n%s" % (path, SNIPPET), file=sys.stderr)
+        sys.exit(1)
+
+if mode == "plan":
+    print(action)
+    sys.exit(0)
+
+if action == "create":
+    out = SNIPPET
+elif action == "append":
+    out = text + ("" if text.endswith("\n") or not text else "\n") + "\n" + SNIPPET
+elif action == "insert":
+    at = tops[0]
+    indent = m.group(1)
+    item = [indent + l for l in ITEM]
+    comment = [indent + l for l in COMMENT]
+    out = "\n".join(lines[:at + 1] + comment + item + lines[at + 1:]) + "\n"
+else:
+    sys.exit(0)
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write(out)
+PY
+}
+
+gitlab_action=""
+if [ "$wire_gitlab" = 1 ]; then
+  gitlab_action="$(gitlab plan "$repo/.gitlab-ci.yml")" || exit 1
+fi
+
+created=0
+updated=0
+kept=0
+report() {
+  printf '%s %s\n' "$1" "$2"
+  case "$1" in
+    created) created=$((created + 1)) ;;
+    updated) updated=$((updated + 1)) ;;
+    kept) kept=$((kept + 1)) ;;
+  esac
+}
+
+while IFS= read -r src; do
+  rel=".prumo/${src#"$TEMPLATES"/}"
+  dest="$repo/$rel"
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    report kept "$rel"
+  else
+    mkdir -p "$(dirname "$dest")"
+    cp "$src" "$dest"
+    report created "$rel"
+  fi
+done < <(find "$TEMPLATES" -type f | LC_ALL=C sort)
+
+case "$gitlab_action" in
+  "") ;;
+  keep) report kept ".gitlab-ci.yml" ;;
+  create)
+    gitlab apply "$repo/.gitlab-ci.yml"
+    report created ".gitlab-ci.yml"
+    ;;
+  *)
+    gitlab apply "$repo/.gitlab-ci.yml"
+    report updated ".gitlab-ci.yml"
+    ;;
+esac
+
+if [ "$wire_github" = 1 ]; then
+  wf="$repo/$GITHUB_WORKFLOW"
+  if [ -e "$wf" ] || [ -L "$wf" ]; then
+    report kept "$GITHUB_WORKFLOW"
+  else
+    mkdir -p "$(dirname "$wf")"
+    cat >"$wf" <<EOF
+# Prumo gates from prumo-pack, pinned to the v0 major tag of the pack.
+name: prumo
+on:
+  push:
+  pull_request:
+jobs:
+  prumo:
+    uses: $GITHUB_REUSABLE
+EOF
+    report created "$GITHUB_WORKFLOW"
+  fi
+fi
+
+printf 'prumo-init: %d created, %d updated, %d kept.\n' "$created" "$updated" "$kept"
+if [ "$force" = "none" ]; then
+  echo "prumo-init: WARNING, --force-ci none: no CI wired. The gates bite only once CI runs them." >&2
+fi
+if [ "$gitlab_action" = create ] || [ "$gitlab_action" = append ] || [ "$gitlab_action" = insert ]; then
+  echo "next: set the CI/CD variable PRUMO_PACK_PROJECT to the GitLab path of prumo-pack."
+fi
+if [ "$created" -gt 0 ]; then
+  echo "next: prumo-trace fails until a test is tagged with the id CORE-01 (or the rule is replaced),"
+  echo "      and checks/metabolic.sh fails until .prumo/subsystems.yml declares a subsystem."
+fi
