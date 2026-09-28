@@ -10,8 +10,9 @@ GH_STUB="templates/ci/github/prumo.yml"
 GH_CI=".github/workflows/ci.yml"
 TEMPLATES="$GITLAB $GH_REUSABLE $GH_STUB $GH_CI"
 
-# Scripts being built in parallel on other branches. A template may call them
-# before they land; any other missing path is a failure.
+# Scripts built in parallel on other branches (anti-leak has landed, the other
+# two may not have). A template may call them before they land; any other
+# missing path is a failure.
 PENDING_SCRIPTS="checks/anti-leak.sh bin/prumo-init bin/prumo-certify"
 
 HAVE_YAML=0
@@ -169,22 +170,31 @@ done
 printf 'job:\n  script: [bin/prumo-ghost]\n' >"$D/t/ghost.yml"
 mkdir -p "$D/bin"
 check "the path check bites on a script that does not exist" 1 env PACK_ROOT="$D" PENDING_SCRIPTS="" bash -c "$(declare -f script_refs_resolve); script_refs_resolve t/ghost.yml"
-check "$GITLAB jobs each call a pack script" 0 jobs_call_scripts "$GITLAB" prumo-trace prumo-fail-closed prumo-metabolic
-check "$GH_REUSABLE jobs each call a pack script" 0 jobs_call_scripts "$GH_REUSABLE" prumo-trace prumo-fail-closed prumo-metabolic
+check "$GITLAB jobs each call a pack script" 0 jobs_call_scripts "$GITLAB" prumo-trace prumo-fail-closed prumo-metabolic prumo-anti-leak
+check "$GH_REUSABLE jobs each call a pack script" 0 jobs_call_scripts "$GH_REUSABLE" prumo-trace prumo-fail-closed prumo-metabolic prumo-anti-leak
 check "$GH_CI make targets exist in the Makefile" 0 make_targets_exist "$GH_CI"
-check_output "$GH_CI runs the anti-leak check unguarded" 0 "bash checks/anti-leak.sh ." grep -F "bash checks/anti-leak.sh ." "$PACK_ROOT/$GH_CI"
+# The pack's own fixtures contain addresses on purpose, so its CI runs the
+# Makefile target that carries the hashed deny list and the fixture excludes.
+check "$GH_CI runs make leak unguarded" 0 grep -qE '^ *run: make leak$' "$PACK_ROOT/$GH_CI"
 check "$GH_STUB calls the reusable workflow by its real path" 0 grep -qE "uses: loonix/prumo-pack/$GH_REUSABLE@" "$PACK_ROOT/$GH_STUB"
 
 echo "reusable workflow"
 check "$GH_REUSABLE declares workflow_call" 0 declares_workflow_call "$GH_REUSABLE"
 check "$GH_REUSABLE declares input fail_closed_dirs" 0 grep -qE '^      fail_closed_dirs:' "$PACK_ROOT/$GH_REUSABLE"
-check "$GH_REUSABLE declares input pack_ref" 0 grep -qE '^      pack_ref:' "$PACK_ROOT/$GH_REUSABLE"
+for i in pack_ref anti_leak anti_leak_args; do
+  check "$GH_REUSABLE declares input $i" 0 grep -qE "^      $i:" "$PACK_ROOT/$GH_REUSABLE"
+done
 check "$GH_CI does not declare workflow_call" 1 declares_workflow_call "$GH_CI"
 
 echo "gitlab variables"
-for v in PRUMO_PACK_URL PRUMO_PACK_REF PRUMO_FAIL_CLOSED_DIRS; do
+for v in PRUMO_PACK_URL PRUMO_PACK_REF PRUMO_FAIL_CLOSED_DIRS PRUMO_ANTI_LEAK PRUMO_ANTI_LEAK_ARGS; do
   check "$GITLAB declares $v" 0 grep -qE "^  $v:" "$PACK_ROOT/$GITLAB"
 done
 check "$GITLAB pins the pack at v0 by default" 0 grep -qE '^  PRUMO_PACK_REF: "?v0"?$' "$PACK_ROOT/$GITLAB"
+# anti-leak is opt in (a project needs its own deny list first), but once on
+# it is a gate like the others: no allow_failure, covered above.
+check "$GITLAB anti-leak job is off by default" 0 grep -qE '^  PRUMO_ANTI_LEAK: "?off"?$' "$PACK_ROOT/$GITLAB"
+check "$GITLAB anti-leak job runs only when switched on" 0 grep -qF '$PRUMO_ANTI_LEAK == "on"' "$PACK_ROOT/$GITLAB"
+check "$GH_REUSABLE anti-leak job runs only when switched on" 0 grep -qF 'if: inputs.anti_leak' "$PACK_ROOT/$GH_REUSABLE"
 
 finish
