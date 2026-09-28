@@ -15,10 +15,13 @@ real project.
 | `bin/prumo-trace` | Works, 31 tests |
 | `checks/fail-closed.sh` | Works, 12 tests |
 | `checks/metabolic.sh` | Works, 19 tests |
-| `bin/prumo-init` (scaffolds `.prumo/`, idempotent) | Not started |
-| `bin/prumo-certify` (file parity, live back end, rendered DOM) | Not started |
-| CI templates (GitLab `include:`, GitHub reusable workflow) | Not started |
-| Claude Code plugin (skills and hooks) | Not started |
+| `checks/anti-leak.sh` | Works, 14 tests |
+| `bin/prumo-init` (scaffolds `.prumo/`, wires CI, idempotent) | Works, 59 tests |
+| `bin/prumo-certify` (file parity, live back end, rendered DOM) | Works, 26 tests plus 3 that need a browser |
+| CI templates (GitLab `include:`, GitHub reusable workflow) | Structure tested, 37 tests plus 4 that need PyYAML; not run on a real runner |
+| Claude Code plugin (skills and hooks) | Works, 91 tests; not loaded in a live session yet |
+
+Skipped tests are reported as skipped, never counted as passed.
 
 ## prumo-trace
 
@@ -110,12 +113,184 @@ Exits 0 when compliant, 1 on a violation, 2 when the repository root does not ex
 whether the metric is collected, whether usage is zero, or whether the text describes a real
 measurement. Only directories directly under a root count as subsystems.
 
+## checks/anti-leak.sh
+
+A generic pack carries no private data. The check flags, per line of every text file:
+
+- an IPv4 address, private ranges included. Loopback, `0.0.0.0`, `255.x` masks and the
+  documentation ranges `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24` are allowed;
+- an email address outside `example.com`, `example.org` and `example.net`;
+- a word whose sha256 is in the deny list (default `.prumo/anti-leak.sha256`). The list holds
+  hashes, not words, so it does not leak what it guards: `printf word | shasum -a 256`.
+
+```sh
+checks/anti-leak.sh [--deny-file FILE] [--exclude PATH ...] [dir]
+```
+
+Exits 0 when compliant, 1 on a finding, a malformed deny list or zero files scanned, 2 on a
+usage error. `make leak` runs it over this pack with `ci/anti-leak.sha256`.
+
+**Limit:** a four part version string reads as an address, a word is only caught whole
+(`[a-z0-9]` runs) and in the list, and hostnames or names not in the list are not seen.
+
+## prumo-init
+
+Scaffolds `.prumo/` in a repository from `templates/.prumo/` and wires the gates into its CI.
+
+```sh
+bin/prumo-init [--force-ci gitlab|github|none] /path/to/repo
+```
+
+It creates each missing file and keeps each existing one byte for byte, printing `created` or
+`kept` per file, so a second run creates nothing and exits 0. It writes:
+
+- `README.md` with the 9 layers of Prumo;
+- `regression-rules/RR-001-core-invariants.md` with one placeholder, `CORE-01`, declared ACTIVE;
+- `specs/SPEC-template.md`, `environment-contracts/`, `execution-contracts/`;
+- a `subsystems.yml` skeleton and an empty `fail-closed.patterns`.
+
+CI is detected: `.gitlab-ci.yml` means GitLab, `.github/` means GitHub, both means both.
+
+- **GitLab:** gets the remote include of `templates/ci/gitlab/prumo.yml` at tag `v0`, added
+  once. An existing block list `include:` gets one more item. Any other `include:` form is
+  refused, with the snippet to add by hand.
+- **GitHub:** gets `templates/ci/github/prumo.yml` copied to `.github/workflows/prumo.yml`.
+- **No CI detected:** refused. Gates that no CI runs are decorative Prumo. `--force-ci gitlab`
+  or `--force-ci github` creates the CI file; `--force-ci none` accepts it with a warning.
+
+A refusal writes nothing. Exits 0 when done, 1 on a refusal, 2 on a usage error.
+
+After init, `prumo-trace` fails until a test carries `PRUMO: CORE-01` (or the rule is replaced
+or revoked), and `checks/metabolic.sh` fails until `.prumo/subsystems.yml` declares a subsystem
+for every directory under its roots. Both failures are intended: the pack does not know the
+repository's invariants or subsystems, and an empty declaration must not pass.
+
+**Limit:** the GitLab edit is line based. It extends only a top level block list `include:`,
+and it takes any mention of `templates/ci/gitlab/prumo.yml` in the file as "already wired".
+
+## prumo-certify
+
+Certifies the live deployment, not the repository. A change measured in the source tree
+while production still serves the old copy is two true measurements, neither of them of
+the thing in question. Declare what the live site must prove in `prumo-certify.json`:
+
+```json
+{
+  "files": [
+    { "local_dir": "web", "url_prefix": "/" }
+  ],
+  "backend": [
+    { "name": "item priced at zero is refused", "method": "POST", "path": "/api/items",
+      "headers": { "Authorization": "Bearer ${API_TOKEN}" },
+      "body": { "title": "CERTIFICATION invalid on purpose", "price_cents": 0 },
+      "expect_status": 400, "expect_body_contains": "price" }
+  ],
+  "frontend": [
+    { "name": "home shows the price", "path": "/", "expect_text": ["Plans start at 10"] }
+  ]
+}
+```
+
+Three layers, each optional:
+
+- `files`: sha256 of each local build file equals what the site serves at its url
+  (`local` + `url`, or `local_dir` + `url_prefix`; paths relative to the manifest);
+- `backend`: live requests answer with `expect_status` and, if given,
+  `expect_body_contains`. Statuses are literal, redirects are not followed;
+- `frontend`: each page, rendered in a real browser, shows every `expect_text` in its
+  visible `innerText`, answers HTTP 200 and logs no console error.
+
+**Prefer invalid writes.** A backend check that POSTs a request the service must refuse
+exercises the rule without polluting production. If such a write is accepted, the check
+fails and warns that a resource may have been created; cleanup is manual.
+
+Secrets never go in the manifest: `${NAME}` in a path, header or body is read from the
+environment, and an unset variable fails the check instead of sending an empty value.
+
+```sh
+bin/prumo-certify --base-url https://example.com [--manifest prumo-certify.json]
+```
+
+Prints one line per check and a tally (`N declared, P passed, F failed, S skipped`).
+Exits 0 only when every declared check ran and passed; 1 on any failure; 2 on a usage
+error. Fails closed on itself: a missing, unparsable or empty manifest (zero checks), an
+unknown key, a `local_dir` with zero files or an unreachable site is a failure.
+
+The `frontend` layer needs `node` with `playwright` (resolved from the manifest's
+directory, the working directory or `NODE_PATH`) and a Chromium it can launch. If the
+manifest declares frontend checks and the tool is missing, they are reported `SKIPPED`
+and the run is refused: a check that did not run is not a pass. A manifest with no
+frontend checks does not need node at all.
+
+**Limit:** it certifies what the manifest declares, nothing more. It does not know which
+requests matter, it does not clean up after a wrongly accepted write, and parity is
+per declared file (a file the site serves but the build no longer holds is not seen).
+
+## CI templates
+
+GitLab, in `.gitlab-ci.yml`:
+
+```yaml
+include:
+  - remote: https://raw.githubusercontent.com/loonix/prumo-pack/v0/templates/ci/gitlab/prumo.yml
+variables:
+  PRUMO_FAIL_CLOSED_DIRS: "src services"   # default "."
+```
+
+Jobs `prumo-trace`, `prumo-fail-closed` and `prumo-metabolic` clone the pack at `PRUMO_PACK_REF`
+(default `v0`, from `PRUMO_PACK_URL`) outside the project and run the checks. `prumo-anti-leak`
+runs only with `PRUMO_ANTI_LEAK: "on"` (arguments in `PRUMO_ANTI_LEAK_ARGS`). No job has
+`allow_failure`. Deploy jobs must `needs:` every test job; the pattern is in the template header.
+
+GitHub: copy `templates/ci/github/prumo.yml` to `.github/workflows/`. It calls the reusable
+workflow `loonix/prumo-pack/.github/workflows/prumo.yml@v0` with inputs `pack_ref`,
+`fail_closed_dirs`, `anti_leak` (default false) and `anti_leak_args`. Keep the ref after `@`
+and `pack_ref` equal.
+
+The project needs `.prumo/regression-rules/` and `.prumo/subsystems.yml`; the checks fail
+without them.
+
+**Limit:** the templates are checked for structure, script paths and the absence of soft
+failure, not executed on a real runner by this pack's tests. While this repository is
+private, a GitLab remote include and a GitHub reusable workflow from another owner cannot
+read it.
+
+## agent/claude-plugin
+
+A Claude Code plugin named `prumo`. Three PreToolUse hooks, python3 stdlib, no LLM call. A block
+is exit 2 with the reason on stderr, which Claude Code feeds back to the model. Input the hook
+cannot read (bad JSON, missing fields, unparsable command) blocks rather than allows.
+
+| Hook | Tools | Blocks |
+|---|---|---|
+| `no_em_dash.py` | Write, Edit, MultiEdit | new text containing U+2014 |
+| `protected_push.py` | Bash | `git push` updating main, master or develop: explicit refspec (`main`, `+main`, `HEAD:main`, `:main`, `--delete main`, wildcards), `--all`/`--mirror`, or no refspec while the current branch or its upstream is protected |
+| `ci_soft_fail.py` | Write, Edit, MultiEdit | `.gitlab-ci.yml`, `*.gitlab-ci.yml` or `.github/workflows/*.yml` gaining `allow_failure: true` or `continue-on-error: true` (or `${{ }}`) |
+
+`PRUMO_PROTECTED_BRANCHES="main,release"` replaces the protected list (empty keeps the default).
+`git push --dry-run` is allowed: the remote is not updated.
+
+Skills: `prumo-certify-before-done`, `prumo-trace`, `prumo-worktree`. `CLAUDE.fragment.md` is a
+rules block to paste into a project's `CLAUDE.md`.
+
+```sh
+claude --plugin-dir agent/claude-plugin     # one session
+claude plugin validate agent/claude-plugin  # manifest check
+```
+
+**Limit:** hooks see only what the tool call says. The push hook does not follow git aliases,
+scripts, `remote.<name>.push` config or variables (a refspec with `$` blocks); it does not stop
+merges through `gh`/`glab` or the web UI. The CI hook does not see files written through Bash
+(`sed -i`, `echo >>`). Branch protection on the server stays the real gate; these hooks stop the
+agent earlier.
+
 ## Development
 
 ```sh
 make test         # runs tests/run.sh; zero cases run counts as a failure
 make trace        # runs prumo-trace over this repo
 make fail-closed  # runs checks/fail-closed.sh over bin, lib and checks
+make leak         # runs checks/anti-leak.sh over this repo
 ```
 
 Needs only `bash` and `python3` (stdlib).
