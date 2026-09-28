@@ -47,6 +47,16 @@ check_output "a private file the site serves fails and is named" 1 "/app.js (ser
 check_output "a private prefix matching no build file fails (nothing checked)" 1 "private prefix /legal/ matches no file" \
   "$C" --base-url "$URL" --manifest "$M/private-no-match.json"
 
+echo "minimum file count"
+check_output "a local_dir holding at least min_count files passes" 0 "3 passed, 0 failed" \
+  "$C" --base-url "$URL" --manifest "$M/min-count-pass.json"
+check_output "a local_dir holding fewer than min_count files fails" 1 "holds 3 files, fewer than min_count 40" \
+  "$C" --base-url "$URL" --manifest "$M/min-count-short.json"
+D="$(tmpdir)"
+printf '{ "files": [ { "local_dir": "%s", "min_count": "40" } ] }\n' "$F/site" >"$D/m.json"
+check_output "min_count that is not a positive integer fails" 1 "min_count must be a positive integer" \
+  "$C" --base-url "$URL" --manifest "$D/m.json"
+
 echo "live back end"
 check_output "requests answered as declared pass" 0 "4 passed, 0 failed" \
   "$C" --base-url "$URL" --manifest "$M/backend-pass.json"

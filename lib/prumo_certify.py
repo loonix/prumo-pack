@@ -19,7 +19,7 @@ Manifest (prumo-certify.json by default), English keys, every layer optional:
   {
     "files":    [ {"local": "web/index.html", "url": "/index.html"},
                   {"local_dir": "web", "url_prefix": "/",
-                   "private_prefixes": ["/legal/"]} ],
+                   "private_prefixes": ["/legal/"], "min_count": 40} ],
     "backend":  [ {"name": "...", "method": "POST", "path": "/api/items",
                    "headers": {"Authorization": "Bearer ${API_TOKEN}"},
                    "body": {...}, "expect_status": 400,
@@ -30,7 +30,9 @@ Manifest (prumo-certify.json by default), English keys, every layer optional:
 Local paths are relative to the manifest. Keys starting with "_" are comments.
 A local_dir file whose url starts with one of its private_prefixes is not
 compared: the site must answer 404 for it, any other status fails. A private
-prefix that matches no file under its local_dir is a manifest error.
+prefix that matches no file under its local_dir is a manifest error. A local_dir
+holding fewer than min_count files (private ones included) is refused, so a
+build step that emptied the directory cannot pass on the few files left.
 "${NAME}" in a path, header value or body string is read from the environment;
 an unset variable fails the check instead of sending an empty secret.
 
@@ -40,7 +42,7 @@ polluted. A write that should be refused and is accepted fails loudly, because a
 resource may now exist in production.
 
 Fails closed on itself: a missing, unparsable or empty manifest (zero checks),
-an unknown key, a local_dir with zero files, or a declared frontend layer whose
+an unknown key, a local_dir with zero files (or fewer than its min_count), or a declared frontend layer whose
 browser tool is missing (SKIPPED) is a failure. A certifier that checked nothing
 cannot say OK.
 
@@ -64,7 +66,8 @@ TIMEOUT = 30
 DOM_RUNNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prumo_certify_dom.mjs")
 LAYERS = ("files", "backend", "frontend")
 KEYS = {
-    "files": ({"local", "url", "local_dir", "url_prefix", "private_prefixes"}, set()),
+    "files": ({"local", "url", "local_dir", "url_prefix", "private_prefixes",
+               "min_count"}, set()),
     "backend": ({"name", "method", "path", "body", "headers", "expect_status",
                  "expect_body_contains"}, {"name", "method", "path", "expect_status"}),
     "frontend": ({"name", "path", "expect_text"}, {"name", "path", "expect_text"}),
@@ -151,7 +154,7 @@ def expand_files(e, where, base, errors):
         errors.append("%s: declare exactly one of local or local_dir" % where)
         return []
     if "local" in e:
-        for k in ("url_prefix", "private_prefixes"):
+        for k in ("url_prefix", "private_prefixes", "min_count"):
             if k in e:
                 errors.append("%s: %s goes with local_dir, not local" % (where, k))
         if not check_url_path(e.get("url"), where, "url", errors):
@@ -171,6 +174,10 @@ def expand_files(e, where, base, errors):
         errors.append("%s: private_prefixes must be a non-empty list of strings starting with /"
                       % where)
         return []
+    minimum = e.get("min_count", 1)
+    if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum < 1:
+        errors.append("%s: min_count must be a positive integer" % where)
+        return []
     root = os.path.join(base, e["local_dir"])
     if not os.path.isdir(root):
         errors.append("%s: local_dir %s does not exist" % (where, e["local_dir"]))
@@ -186,6 +193,9 @@ def expand_files(e, where, base, errors):
     if not found:
         errors.append("%s: local_dir %s holds zero files, nothing to compare"
                       % (where, e["local_dir"]))
+    elif len(found) < minimum:
+        errors.append("%s: local_dir %s holds %d files, fewer than min_count %d"
+                      % (where, e["local_dir"], len(found), minimum))
     for p in private:
         if found and not any(url.startswith(p) for _, url, _ in found):
             errors.append("%s: private prefix %s matches no file under local_dir %s, "
