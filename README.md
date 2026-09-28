@@ -20,7 +20,7 @@ The paradigm itself, in full (chapters 1 to 9, English): [docs/whitepaper.md](do
 | `checks/anti-leak.sh` | Works, 14 tests |
 | `bin/prumo-init` (scaffolds `.prumo/`, vendors the gates, wires CI, idempotent) | Works, 91 tests |
 | `bin/prumo-vendor-verify` (vendored gates against their MANIFEST) | Works, 27 tests |
-| `bin/prumo-certify` (file parity, live back end, rendered DOM) | Works, 26 tests plus 3 that need a browser |
+| `bin/prumo-certify` (file parity, live back end, rendered DOM) | Works, 35 tests plus 9 that need a browser |
 | CI templates (vendored and remote, GitLab and GitHub) | Structure tested, 52 tests plus 6 that need PyYAML; vendored jobs replayed locally from the YAML; not run on a real runner |
 | Claude Code plugin (skills and hooks) | Works, 91 tests; not loaded in a live session yet |
 
@@ -188,7 +188,7 @@ the thing in question. Declare what the live site must prove in `prumo-certify.j
 ```json
 {
   "files": [
-    { "local_dir": "web", "url_prefix": "/" }
+    { "local_dir": "web", "url_prefix": "/", "private_prefixes": ["/legal/"], "min_count": 40 }
   ],
   "backend": [
     { "name": "item priced at zero is refused", "method": "POST", "path": "/api/items",
@@ -197,7 +197,9 @@ the thing in question. Declare what the live site must prove in `prumo-certify.j
       "expect_status": 400, "expect_body_contains": "price" }
   ],
   "frontend": [
-    { "name": "home shows the price", "path": "/", "expect_text": ["Plans start at 10"] }
+    { "name": "home shows the price", "path": "/", "expect_text": ["Plans start at 10"],
+      "expect_absent": ["Sold out"], "expect_visible_selector": ["#signup"],
+      "expect_image_loaded": ["img.logo"] }
   ]
 }
 ```
@@ -205,11 +207,22 @@ the thing in question. Declare what the live site must prove in `prumo-certify.j
 Three layers, each optional:
 
 - `files`: sha256 of each local build file equals what the site serves at its url
-  (`local` + `url`, or `local_dir` + `url_prefix`; paths relative to the manifest);
+  (`local` + `url`, or `local_dir` + `url_prefix`; paths relative to the manifest).
+  On a `local_dir`, `private_prefixes` lists url prefixes the site must NOT serve: a
+  build file under one of them must answer 404, any other status fails, and a prefix
+  that matches no file is a manifest error. `min_count` refuses a `local_dir` holding
+  fewer files (private ones included), so a build that lost most of its output cannot
+  pass on what is left;
 - `backend`: live requests answer with `expect_status` and, if given,
   `expect_body_contains`. Statuses are literal, redirects are not followed;
 - `frontend`: each page, rendered in a real browser, shows every `expect_text` in its
-  visible `innerText`, answers HTTP 200 and logs no console error.
+  visible `innerText`, answers HTTP 200 and logs no console error. Optional lists:
+  `expect_absent`, texts the visible `innerText` must not contain (case-insensitive);
+  `expect_visible_selector`, CSS selectors whose first match is rendered, has a
+  non-zero box and computed `visibility: visible`; `expect_image_loaded`, CSS selectors
+  whose first match is an `<img>` with `complete` and `naturalWidth > 0` (a broken
+  image still has a box, so visibility alone would pass it). No match or an invalid
+  selector fails.
 
 **Prefer invalid writes.** A backend check that POSTs a request the service must refuse
 exercises the rule without polluting production. If such a write is accepted, the check
@@ -225,7 +238,8 @@ bin/prumo-certify --base-url https://example.com [--manifest prumo-certify.json]
 Prints one line per check and a tally (`N declared, P passed, F failed, S skipped`).
 Exits 0 only when every declared check ran and passed; 1 on any failure; 2 on a usage
 error. Fails closed on itself: a missing, unparsable or empty manifest (zero checks), an
-unknown key, a `local_dir` with zero files or an unreachable site is a failure.
+unknown key, a `local_dir` with zero files (or fewer than its `min_count`), a private
+prefix matching no file or an unreachable site is a failure.
 
 The `frontend` layer needs `node` with `playwright` (resolved from the manifest's
 directory, the working directory or `NODE_PATH`) and a Chromium it can launch. If the
