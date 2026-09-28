@@ -1,0 +1,17 @@
+{
+  "description": "Prumo mechanical gates. Each hook is python3 stdlib, calls no LLM, blocks with exit 2 and fails closed on input it cannot read.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/no_em_dash.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
