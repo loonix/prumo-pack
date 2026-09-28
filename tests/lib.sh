@@ -47,16 +47,15 @@ skip() {
   printf '  SKIP   %s (%s)\n' "$1" "$2"
 }
 
-# Temporary directory removed when the test file exits.
+# Temporary directory removed when the test file exits. Callers use
+# D="$(tmpdir)", a subshell, so the directory lives under one root created here
+# in the parent shell; the root is what cleanup removes.
+_TMPROOT="$(mktemp -d "${TMPDIR:-/tmp}/prumo-test.XXXXXX")"
 tmpdir() {
-  local d
-  d="$(mktemp -d "${TMPDIR:-/tmp}/prumo-test.XXXXXX")"
-  _TMPDIRS="${_TMPDIRS:-} $d"
-  printf '%s' "$d"
+  mktemp -d "$_TMPROOT/d.XXXXXX"
 }
 _cleanup() {
-  local d
-  for d in ${_TMPDIRS:-}; do rm -rf "$d"; done
+  rm -rf "$_TMPROOT"
 }
 trap _cleanup EXIT
 
