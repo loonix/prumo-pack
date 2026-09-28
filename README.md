@@ -215,9 +215,9 @@ Three layers, each optional:
   pass on what is left;
 - `backend`: live requests answer with `expect_status` and, if given,
   `expect_body_contains`. Statuses are literal, redirects are not followed;
-- `frontend`: each page, rendered in a real browser, shows every `expect_text` in its
-  visible `innerText`, answers HTTP 200 and logs no console error. Optional lists:
-  `expect_absent`, texts the visible `innerText` must not contain (case-insensitive);
+- `frontend`: each page, rendered in a real browser, answers HTTP 200, logs no console
+  error and passes every assertion list it declares (at least one is required):
+  `expect_text`, texts the visible `innerText` must contain; `expect_absent`, texts the visible `innerText` must not contain (case-insensitive);
   `expect_visible_selector`, CSS selectors whose first match is rendered, has a
   non-zero box and computed `visibility: visible`; `expect_image_loaded`, CSS selectors
   whose first match is an `<img>` with `complete` and `naturalWidth > 0` (a broken
