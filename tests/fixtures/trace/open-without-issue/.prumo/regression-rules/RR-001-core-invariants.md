@@ -1,0 +1,2 @@
+- `SEC-01` : **ACTIVE** : proven
+- `BIZ-07` : **OPEN** : debt with nowhere to be discussed

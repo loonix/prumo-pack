@@ -1,2 +1,0 @@
-- `SEC-01` : **ACTIVE** : provada
-- `BIZ-07` : **OPEN** (issue #3) : afinal ja ha teste

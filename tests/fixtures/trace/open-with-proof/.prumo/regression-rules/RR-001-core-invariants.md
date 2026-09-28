@@ -1,0 +1,2 @@
+- `SEC-01` : **ACTIVE** : proven
+- `BIZ-07` : **OPEN** (issue #3) : there is a test after all

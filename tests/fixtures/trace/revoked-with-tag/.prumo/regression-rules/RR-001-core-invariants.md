@@ -1,0 +1,2 @@
+- `SEC-01` : **ACTIVE** : proven
+- `BIZ-02` : **REVOKED 2026-09-18 (business owner)** : dead rule
