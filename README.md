@@ -8,6 +8,8 @@ Prumo is an engineering paradigm for working with agents. The rule behind this p
 mechanical, no check calls an LLM, and nothing gets in until it has been measured biting in a
 real project.
 
+The paradigm itself, in full (chapters 1 to 9, English): [docs/whitepaper.md](docs/whitepaper.md).
+
 ## Status (v0.1.0)
 
 | Piece | Status |
