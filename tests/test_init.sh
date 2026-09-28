@@ -4,7 +4,10 @@
 # builds its repository in a temporary directory.
 . "$(dirname "$0")/lib.sh"
 
-I="$PACK_ROOT/bin/prumo-init"
+# This file covers --source remote, the CI that fetches the pack over the
+# network. The default, --source vendor, is covered by tests/test_init_vendor.sh.
+init_remote() { "$PACK_ROOT/bin/prumo-init" --source remote "$@"; }
+I=init_remote
 T="$PACK_ROOT/bin/prumo-trace"
 M="$PACK_ROOT/checks/metabolic.sh"
 FC="$PACK_ROOT/checks/fail-closed.sh"
