@@ -165,9 +165,11 @@ printf 'job:\n  script: [x]\n  allow_failure: true\n' >"$D/t/bad.yml"
 check "the soft failure check bites on allow_failure: true" 1 env PACK_ROOT="$D" bash -c "$(declare -f no_soft_failure); no_soft_failure t/bad.yml"
 
 echo "script paths resolve"
-for t in $GITLAB $GH_REUSABLE $GH_CI; do
+for t in $GITLAB $GH_REUSABLE; do
   check "$t names only shipped or pending scripts" 0 script_refs_resolve "$t"
 done
+# The pack's own CI calls make targets; the scripts behind them are in the Makefile.
+check "Makefile names only shipped or pending scripts" 0 script_refs_resolve Makefile
 printf 'job:\n  script: [bin/prumo-ghost]\n' >"$D/t/ghost.yml"
 mkdir -p "$D/bin"
 check "the path check bites on a script that does not exist" 1 env PACK_ROOT="$D" PENDING_SCRIPTS="" bash -c "$(declare -f script_refs_resolve); script_refs_resolve t/ghost.yml"
