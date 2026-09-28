@@ -21,7 +21,7 @@ Format of an invariant, on one markdown list line:
     - `BIZ-07` : **OPEN** (issue #3) : text
 
 The separator between fields is free; only the id between backticks and the
-bold status count (ACTIVA, REVOGADA and ABERTA are accepted as legacy).
+bold status count.
 Language agnostic: what gets scanned is text.
 
 Declared limit: a tag proves that a test points at the rule, not that the
@@ -68,11 +68,11 @@ def valid_id(s):
 
 
 def declared_status(rest):
-    """The bold status. The Portuguese names are accepted as legacy."""
-    for status, marks in (("ACTIVE", ("**ACTIVE", "**ACTIVA")),
-                          ("REVOKED", ("**REVOKED", "**REVOGADA")),
-                          ("OPEN", ("**OPEN**", "**ABERTA**"))):
-        if any(m in rest for m in marks):
+    """The bold status: ACTIVE, REVOKED or OPEN."""
+    for status, mark in (("ACTIVE", "**ACTIVE"),
+                         ("REVOKED", "**REVOKED"),
+                         ("OPEN", "**OPEN**")):
+        if mark in rest:
             return status
     return None
 

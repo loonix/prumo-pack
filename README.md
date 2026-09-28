@@ -33,9 +33,6 @@ Declare an invariant as one markdown list line, with status `ACTIVE`, `REVOKED` 
 - `BIZ-07` : **OPEN** (issue #3) : text
 ```
 
-The Portuguese keywords `ACTIVA`, `REVOGADA` and `ABERTA` are still accepted, for repositories
-already declared in Portuguese.
-
 Tag the test that proves it, in any code or CI file:
 
 ```rust

@@ -36,18 +36,22 @@ for bad in sec-01 SE-01 BIZ- BIZ-x BIZ-04bb RR-001 -01 BIZ01; do
   check "rejects $bad" 1 "$T" --valid-id "$bad"
 done
 
-echo "legacy format compatibility (em dash and Portuguese statuses, generated here)"
+echo "em dash separator (generated here)"
 D="$(tmpdir)"
 mkdir -p "$D/.prumo/regression-rules" "$D/src"
 DASH="$(printf '\342\200\224')"
-printf -- '- `SEC-01` %s **ACTIVA** %s legacy\n- `BIZ-02` %s **REVOGADA 18 Set 2026 (x)** %s dead\n' \
+printf -- '- `SEC-01` %s **ACTIVE** %s dash\n- `BIZ-02` %s **REVOKED 2026-09-18 (x)** %s dead\n' \
   "$DASH" "$DASH" "$DASH" "$DASH" >"$D/.prumo/regression-rules/RR-001-core-invariants.md"
 cp "$F/active-without-tag/src/t.sh" "$D/src/t.sh"
-check "legacy RR (em dash, ACTIVA, REVOGADA) is read" 0 "$T" --root "$D"
-D="$(tmpdir)"
-mkdir -p "$D/.prumo/regression-rules" "$D/src"
-printf -- '- `BIZ-07` : **ABERTA** (issue #3) : legacy\n' >"$D/.prumo/regression-rules/RR-001-core-invariants.md"
-printf '# PRUMO: BIZ-07\n' >"$D/src/t.sh"
-check_output "legacy ABERTA counts as OPEN" 1 "BIZ-07 already proven" "$T" --root "$D"
+check "em dash separator is read" 0 "$T" --root "$D"
+
+echo "statuses are English only"
+for st in ACTIVA REVOGADA ABERTA; do
+  D="$(tmpdir)"
+  mkdir -p "$D/.prumo/regression-rules" "$D/src"
+  printf -- '- `BIZ-07` : **%s** : x\n' "$st" >"$D/.prumo/regression-rules/RR-001-core-invariants.md"
+  printf '# PRUMO: BIZ-07\n' >"$D/src/t.sh"
+  check_output "$st is not a status" 1 "declares no status" "$T" --root "$D"
+done
 
 finish
