@@ -27,7 +27,44 @@ passes, expect_text is optional" and "frontend check with no assertion at all fa
 
 After the fix the full manifest gives 151 declared, 151 passed (69 files, 82 pages).
 
-Still not verified: the backend layer side by side.
+## Backend layer, side by side against a local instance (28 Sep 2026)
+
+This ran against a local build of the project at commit `789c3fd`, NOT production:
+the API on `http://127.0.0.1:18087`, a throwaway empty database, throwaway secrets,
+`STRIPE_ENABLED=false`, InvoiceXpress, SMTP and the alert webhook off. No request left
+localhost. The manifest mirrors every request of the original, same order, 17 entries.
+The port cannot log in by itself, so the admin token was fetched with one `curl` and
+passed as `ADMIN_TOKEN`; the login check itself is still declared.
+
+| Check | Original | prumo-certify |
+|---|---|---|
+| Health says db ok | pass | pass |
+| Config exposes the Stripe publishable key | fail | fail |
+| Stripe webhook requires a signature (400) | fail, got 200 | fail, got 200 |
+| Intake refuses a wrong key (401) | pass | pass |
+| Admin refuses a wrong password (401) | pass | pass |
+| Broker dashboard requires a session (401) | pass | pass |
+| Terms PT, EN, FR, ES are not public pages (404, 4 checks) | 4 pass | 4 pass |
+| Legal text not served by the portal static dir (404) | pass | pass |
+| Legal text requires an account (401) | pass | pass |
+| Admin logs in with the right password | pass | pass |
+| Four invalid leads refused (400, 4 checks) | 4 pass | 4 pass |
+| Footer logo has no coloured pixel | pass | not ported |
+| **Total** | 16 OK, 2 failures, exit 1 | 17 declared, 15 passed, 2 failed, exit 1 |
+
+No divergence on the 17 shared checks. The two failures are the same in both and are
+caused by the local environment, not by either certifier: with Stripe disabled the API
+serves no publishable key and the webhook answers 200 `stripe_disabled`. Both
+certifiers caught it. No lead was created (the `leads` table was empty after the run).
+
+Control with the admin secret unset: the original reports 11 OK, 3 failures (one line
+for the whole business rule block); the port reports 10 passed, 7 failed (each check
+that needs the secret fails on its own, request not sent). Both exit 1. Different
+counts, same verdict, by design.
+
+Still not verified: the backend layer against production, and the business rules
+against a build where a rule is broken (every rule check passed here, so only the two
+Stripe checks exercised the failure path).
 
 ## What was ported
 
