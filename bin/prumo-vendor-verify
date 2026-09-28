@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""prumo-vendor-verify: checks a vendored copy of the Prumo gates against its
+MANIFEST before any gate runs.
+
+prumo-init copies the gate scripts into <repo>/.prumo/vendor/ and writes
+.prumo/vendor/MANIFEST:
+
+    # comment
+    format 1
+    pack_commit <40 hex, the prumo-pack commit the files came from>
+    pack_dirty no|yes
+    pack_version <text>
+    file <sha256> <755|644> <path relative to the vendor directory>
+
+The check fails closed on: a missing or unparsable MANIFEST, zero files
+listed, a path listed twice or escaping the directory, a listed file that is
+missing, is not a regular file, has another sha256 or another executable bit,
+and any file, symlink or bytecode in the directory that the MANIFEST does not
+list.
+
+Limit: the MANIFEST lives in the same repository as the files it describes.
+It catches drift and accidents; an edit that also rewrites the MANIFEST (or
+this script) passes. What stops a deliberate edit is branch protection plus a
+required pipeline, not this file.
+
+Usage: prumo-vendor-verify [VENDOR_DIR]
+       (default: the directory above this script's bin/)
+Exit:  0 verified, 1 mismatch, 2 usage error.
+"""
+import hashlib
+import os
+import re
+import stat
+import sys
+
+USAGE = "usage: prumo-vendor-verify [VENDOR_DIR]"
+HEX40 = re.compile(r"^[0-9a-f]{40}$")
+HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def usage(msg=None):
+    if msg:
+        print("prumo-vendor-verify: " + msg, file=sys.stderr)
+    print(USAGE, file=sys.stderr)
+    sys.exit(2)
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def parse_manifest(path, errors):
+    """Returns (header dict, {path: (sha, mode)})."""
+    header, files = {}, {}
+    with open(path, encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+    for n, line in enumerate(lines, 1):
+        if not line.strip() or line.startswith("#"):
+            continue
+        parts = line.split(" ")
+        key = parts[0]
+        if key in ("format", "pack_commit", "pack_dirty", "pack_version") and len(parts) == 2:
+            if key in header:
+                errors.append("MANIFEST line %d: %s declared twice" % (n, key))
+            header[key] = parts[1]
+        elif key == "file" and len(parts) == 4:
+            _, digest, mode, rel = parts
+            if not HEX64.match(digest):
+                errors.append("MANIFEST line %d: '%s' is not a sha256" % (n, digest))
+            elif mode not in ("755", "644"):
+                errors.append("MANIFEST line %d: mode '%s' is not 755 or 644" % (n, mode))
+            elif (rel.startswith("/") or rel == "MANIFEST" or not rel
+                  or any(p in ("", ".", "..") for p in rel.split("/"))):
+                errors.append("MANIFEST line %d: path '%s' is outside the vendor directory "
+                              "or not normalized" % (n, rel))
+            elif rel in files:
+                errors.append("MANIFEST line %d: %s listed twice" % (n, rel))
+            else:
+                files[rel] = (digest, mode)
+        else:
+            errors.append("MANIFEST line %d: cannot parse '%s'" % (n, line))
+    if header.get("format") != "1":
+        errors.append("MANIFEST format is '%s', this verifier reads format 1"
+                      % header.get("format", "missing"))
+    if not HEX40.match(header.get("pack_commit", "")):
+        errors.append("MANIFEST pack_commit is '%s', not a 40 hex commit sha"
+                      % header.get("pack_commit", "missing"))
+    if header.get("pack_dirty") not in ("no", "yes"):
+        errors.append("MANIFEST pack_dirty must be no or yes")
+    if "pack_version" not in header:
+        errors.append("MANIFEST pack_version missing")
+    if not files:
+        errors.append("MANIFEST lists no file: a verifier that verified nothing does not say OK")
+    return header, files
+
+
+def main(argv):
+    args = []
+    for a in argv:
+        if a in ("-h", "--help"):
+            print(USAGE)
+            return 0
+        if a.startswith("-"):
+            usage("unknown flag '%s'." % a)
+        args.append(a)
+    if len(args) > 1:
+        usage()
+    if args:
+        vendor = args[0]
+    else:
+        vendor = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    vendor = os.path.normpath(vendor)
+    if not os.path.isdir(vendor):
+        usage("vendor directory '%s' does not exist." % vendor)
+
+    errors = []
+    mpath = os.path.join(vendor, "MANIFEST")
+    if os.path.islink(mpath) or not os.path.isfile(mpath):
+        print("prumo-vendor-verify: FAIL, no regular MANIFEST in %s" % vendor)
+        return 1
+    try:
+        header, files = parse_manifest(mpath, errors)
+    except (OSError, UnicodeDecodeError) as exc:
+        print("prumo-vendor-verify: FAIL, cannot read MANIFEST: %s" % exc)
+        return 1
+
+    for rel in sorted(files):
+        digest, mode = files[rel]
+        path = os.path.join(vendor, rel)
+        try:
+            st = os.lstat(path)
+        except FileNotFoundError:
+            errors.append("%s: missing" % rel)
+            continue
+        except OSError as exc:
+            errors.append("%s: cannot stat (%s)" % (rel, exc))
+            continue
+        if not stat.S_ISREG(st.st_mode):
+            errors.append("%s: not a regular file" % rel)
+            continue
+        got = sha256(path)
+        if got != digest:
+            errors.append("%s: sha256 mismatch (MANIFEST %s, file %s)" % (rel, digest, got))
+        executable = bool(st.st_mode & stat.S_IXUSR)
+        if executable != (mode == "755"):
+            errors.append("%s: mode is %s, MANIFEST says %s"
+                          % (rel, "executable" if executable else "not executable", mode))
+
+    for dirpath, dirnames, filenames in os.walk(vendor):
+        for name in sorted(dirnames):
+            full = os.path.join(dirpath, name)
+            if os.path.islink(full):
+                errors.append("%s: unlisted symlink" % os.path.relpath(full, vendor))
+        for name in sorted(filenames):
+            full = os.path.join(dirpath, name)
+            rel = os.path.relpath(full, vendor).replace(os.sep, "/")
+            if rel != "MANIFEST" and rel not in files:
+                errors.append("%s: unlisted file" % rel)
+
+    commit = header.get("pack_commit", "?")
+    if errors:
+        for e in errors:
+            print("  " + e)
+        print("prumo-vendor-verify: FAIL, %d problem(s) in %s against MANIFEST (prumo-pack %s). "
+              "Rerun prumo-init from the pack to restore." % (len(errors), vendor, commit))
+        return 1
+    if header.get("pack_dirty") == "yes":
+        print("prumo-vendor-verify: WARNING, vendored from a pack tree with uncommitted changes; "
+              "commit %s does not describe these files." % commit)
+    print("prumo-vendor-verify: OK, %d file(s) match MANIFEST (prumo-pack %s, version %s)."
+          % (len(files), commit, header.get("pack_version")))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
