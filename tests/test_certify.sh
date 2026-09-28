@@ -109,6 +109,9 @@ check_output "expect_absent that is not a list of strings fails" 1 "expect_absen
 printf '{ "frontend": [ { "name": "x", "path": "/", "expect_text": ["a"], "expect_visible_selector": [""] } ] }\n' >"$D/m.json"
 check_output "expect_visible_selector with an empty selector fails" 1 "expect_visible_selector must be a non-empty list" \
   "$C" --base-url "$URL" --manifest "$D/m.json"
+printf '{ "frontend": [ { "name": "x", "path": "/", "expect_text": ["a"], "expect_image_loaded": [] } ] }\n' >"$D/m.json"
+check_output "expect_image_loaded as an empty list fails" 1 "expect_image_loaded must be a non-empty list" \
+  "$C" --base-url "$URL" --manifest "$D/m.json"
 
 echo "rendered DOM, tool missing"
 check_output "frontend declared, node missing: SKIPPED counts as failure" 1 "SKIPPED" \
@@ -145,10 +148,16 @@ if node "$DOM" --probe "$M" >/dev/null 2>&1; then
   check_output "hidden, empty, missing or invalid selectors fail, each named" 1 \
     'selector not visible: #promo (display:none on it or an ancestor), #ghost (visibility:hidden), #empty (zero-size box), #nowhere (no element matches), p > (invalid selector)' \
     "$C" --base-url "$URL" --manifest "$M/frontend-selector-fail.json"
+  check_output "an image that decoded with a non-zero width passes" 0 "1 passed, 0 failed" \
+    "$C" --base-url "$URL" --manifest "$M/frontend-image-pass.json"
+  check_output "broken, non-img or missing images fail, each named" 1 \
+    'image not loaded: #broken (complete but naturalWidth 0), #cta (not an img element), #nowhere (no element matches)' \
+    "$C" --base-url "$URL" --manifest "$M/frontend-image-fail.json"
 else
   for n in "visible text passes" "hidden text fails" "console error fails" \
     "absent texts pass" "visible absent text fails" \
-    "visible selectors pass" "hidden selectors fail"; do
+    "visible selectors pass" "hidden selectors fail" \
+    "loaded image passes" "broken images fail"; do
     skip "$n" "node with playwright and chromium not available (set NODE_PATH)"
   done
 fi

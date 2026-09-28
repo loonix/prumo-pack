@@ -1,0 +1,7 @@
+{
+  "frontend": [
+    { "name": "home loads the logo", "path": "/index.html",
+      "expect_text": ["Example site"],
+      "expect_image_loaded": ["#logo"] }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "frontend": [
+    { "name": "home loads images that are broken, not images or absent", "path": "/index.html",
+      "expect_text": ["Example site"],
+      "expect_image_loaded": ["#logo", "#broken", "#cta", "#nowhere"] }
+  ]
+}
