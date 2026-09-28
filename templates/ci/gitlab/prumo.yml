@@ -1,0 +1,70 @@
+# Prumo gates for GitLab CI.
+#
+# Include it from the consuming project's .gitlab-ci.yml:
+#
+#   include:
+#     - remote: https://raw.githubusercontent.com/loonix/prumo-pack/v0/templates/ci/gitlab/prumo.yml
+#
+#   variables:
+#     PRUMO_FAIL_CLOSED_DIRS: "src services"   # optional, default "."
+#
+# Each job clones the pack at PRUMO_PACK_REF (a tag, branch or commit sha) into
+# a directory outside the project, so the pack's own fixtures are never scanned
+# as project code. No job has allow_failure: a gate that may fail without
+# stopping the pipeline is a log line, not a gate.
+#
+# The consuming project needs .prumo/regression-rules/ (prumo-trace) and
+# .prumo/subsystems.yml (metabolic). Both checks fail when the declarations are
+# missing: a checker that checked nothing does not get to say OK.
+#
+# Deploy jobs must `needs:` every test job, the Prumo jobs included, so a red
+# gate blocks the deploy instead of running beside it. Pattern:
+#
+#   deploy-simulation:
+#     stage: deploy
+#     needs:
+#       - job: unit-tests            # every test job of the project
+#       - job: prumo-trace
+#       - job: prumo-fail-closed
+#       - job: prumo-metabolic
+#     script:
+#       - ./deploy.sh --dry-run      # the same path as the real deploy, no side effects
+#
+#   deploy-production:
+#     stage: deploy
+#     needs: [deploy-simulation]
+#     script:
+#       - ./deploy.sh
+
+variables:
+  PRUMO_PACK_URL: "https://github.com/loonix/prumo-pack.git"
+  PRUMO_PACK_REF: "v0"
+  PRUMO_PACK_DIR: "/tmp/prumo-pack"
+  PRUMO_FAIL_CLOSED_DIRS: "."
+  PRUMO_IMAGE: "python:3.12"
+
+.prumo-base:
+  stage: test
+  image: $PRUMO_IMAGE
+  before_script:
+    - rm -rf "$PRUMO_PACK_DIR"
+    - git init --quiet "$PRUMO_PACK_DIR"
+    - git -C "$PRUMO_PACK_DIR" fetch --quiet --depth 1 "$PRUMO_PACK_URL" "$PRUMO_PACK_REF"
+    - git -C "$PRUMO_PACK_DIR" checkout --quiet FETCH_HEAD
+    - echo "prumo-pack $PRUMO_PACK_REF at $(git -C "$PRUMO_PACK_DIR" rev-parse HEAD)"
+
+prumo-trace:
+  extends: .prumo-base
+  script:
+    - '"$PRUMO_PACK_DIR/bin/prumo-trace" --root .'
+
+prumo-fail-closed:
+  extends: .prumo-base
+  script:
+    # Space separated list; globbing is off so the names are taken literally.
+    - set -f; "$PRUMO_PACK_DIR/checks/fail-closed.sh" $PRUMO_FAIL_CLOSED_DIRS
+
+prumo-metabolic:
+  extends: .prumo-base
+  script:
+    - '"$PRUMO_PACK_DIR/checks/metabolic.sh" .'
