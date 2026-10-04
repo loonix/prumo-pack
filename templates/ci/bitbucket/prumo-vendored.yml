@@ -1,0 +1,55 @@
+# Prumo gates for Bitbucket Cloud pipelines, run from the copy prumo-init
+# vendored into .prumo/vendor/. prumo-init writes this file to
+# bitbucket-pipelines.yml in a repository that has none.
+#
+# Nothing is fetched from the pack: a private pack needs no token and a tag
+# moved upstream cannot change what runs here. Every step verifies the
+# vendored copy first, so a file that drifted from its MANIFEST fails before a
+# gate reads it. Rerun prumo-init from the pack to upgrade or restore.
+#
+# No step fails softly: a gate that does not stop the pipeline is a log line,
+# not a gate. Deployment steps must come after these four.
+#
+# Repository variables (Repository settings, Pipelines, Repository variables)
+# override the defaults used below:
+#   PRUMO_VENDOR_DIR        the vendored copy, ".prumo/vendor"
+#   PRUMO_FAIL_CLOSED_DIRS  space separated directories for the fail closed
+#                           gate, "."
+#   PRUMO_ANTI_LEAK         "on" runs the leak gate, anything else skips it
+#   PRUMO_ANTI_LEAK_ARGS    space separated arguments for the leak gate, "."
+#
+# To gate pull requests too, repeat the four steps under a pull-requests
+# section: Bitbucket Cloud expands no anchor across sections, and a step that
+# skips the verification runs whatever happens to be on disk.
+
+image: python:3.12
+
+pipelines:
+  default:
+    - step:
+        name: prumo-trace
+        script:
+          - 'PRUMO_VENDOR_DIR="${PRUMO_VENDOR_DIR:-.prumo/vendor}"; export PRUMO_VENDOR_DIR'
+          - '"$PRUMO_VENDOR_DIR/bin/prumo-vendor-verify" "$PRUMO_VENDOR_DIR"'
+          - '"$PRUMO_VENDOR_DIR/bin/prumo-trace" --root .'
+    - step:
+        name: prumo-fail-closed
+        script:
+          - 'PRUMO_VENDOR_DIR="${PRUMO_VENDOR_DIR:-.prumo/vendor}"; export PRUMO_VENDOR_DIR'
+          - '"$PRUMO_VENDOR_DIR/bin/prumo-vendor-verify" "$PRUMO_VENDOR_DIR"'
+          # Globbing is off so the directory names are taken literally.
+          - 'set -f; "$PRUMO_VENDOR_DIR/checks/fail-closed.sh" ${PRUMO_FAIL_CLOSED_DIRS:-.}'
+    - step:
+        name: prumo-metabolic
+        script:
+          - 'PRUMO_VENDOR_DIR="${PRUMO_VENDOR_DIR:-.prumo/vendor}"; export PRUMO_VENDOR_DIR'
+          - '"$PRUMO_VENDOR_DIR/bin/prumo-vendor-verify" "$PRUMO_VENDOR_DIR"'
+          - '"$PRUMO_VENDOR_DIR/checks/metabolic.sh" .'
+    - step:
+        name: prumo-anti-leak
+        script:
+          - 'PRUMO_VENDOR_DIR="${PRUMO_VENDOR_DIR:-.prumo/vendor}"; export PRUMO_VENDOR_DIR'
+          - '"$PRUMO_VENDOR_DIR/bin/prumo-vendor-verify" "$PRUMO_VENDOR_DIR"'
+          - 'if [ "${PRUMO_ANTI_LEAK:-off}" != on ]; then echo "PRUMO_ANTI_LEAK is not on, leak gate skipped"; exit 0; fi'
+          # Globbing is off so the arguments are taken literally.
+          - 'set -f; "$PRUMO_VENDOR_DIR/checks/anti-leak.sh" ${PRUMO_ANTI_LEAK_ARGS:-.}'
