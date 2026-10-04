@@ -172,4 +172,39 @@ check "bitbucket-pipelines.yml reaches no network" 0 no_network "$D/bitbucket-pi
 check "the MANIFEST verifies in a Bitbucket repository" 0 "$D/$V/bin/prumo-vendor-verify"
 check_output "second Bitbucket run is a no-op" 0 "kept bitbucket-pipelines.yml" "$I" "$D"
 
+echo "the vendored Bitbucket steps replay locally"
+# replay_yaml <repo> <file>: runs every single-quoted script line of a Bitbucket
+# pipelines file inside the repository, in order, with the variables the
+# template defaults. The anti-leak invocation is left out because the template
+# runs it only when PRUMO_ANTI_LEAK is "on"; the line that skips when the
+# variable is off does run, and prints that it skipped.
+replay_yaml() {
+  local d="$1" f="$2" cmds rc=0 c
+  cmds="$(python3 - "$d/$f" <<'PY'
+import re, sys
+for line in open(sys.argv[1], encoding="utf-8"):
+    m = re.match(r"\s*-\s*'(.*)'\s*$", line)
+    if m and "anti-leak.sh" not in m.group(1):
+        print(m.group(1))
+PY
+)"
+  [ -n "$cmds" ] || { echo "no script line found in $f"; return 1; }
+  while IFS= read -r c; do
+    (cd "$d" && PRUMO_VENDOR_DIR="$V" PRUMO_FAIL_CLOSED_DIRS="." PRUMO_ANTI_LEAK="off" \
+      PRUMO_ANTI_LEAK_ARGS="." sh -c "$c") || rc=1
+  done <<<"$cmds"
+  return "$rc"
+}
+D="$(repo none)"
+"$I" --force-ci bitbucket "$D" >/dev/null 2>&1
+mkdir -p "$D/tests" "$D/src/billing"
+printf '#!/bin/sh\n# PRUMO: CORE-01\ntest "$(echo ok)" = ok\n' >"$D/tests/core_test.sh"
+printf '  - name: billing\n    path: src/billing\n    usage_metric: invoices per day\n    since: 2026-09-01\n' >>"$D/.prumo/subsystems.yml"
+printf 'def serve():\n    return 0\n' >"$D/src/billing/app.py"
+check "a Bitbucket repository passes every gate on replay" 0 replay_yaml "$D" bitbucket-pipelines.yml
+printf 'X' >>"$D/$V/lib/prumo_trace.py"
+check "a drifted vendor directory fails the Bitbucket replay before a gate" 1 replay_yaml "$D" bitbucket-pipelines.yml
+check_output "rerun restores the vendor directory of a Bitbucket repository" 0 "updated $V" "$I" --force-ci bitbucket "$D"
+check "the restored Bitbucket repository replays green again" 0 replay_yaml "$D" bitbucket-pipelines.yml
+
 finish
