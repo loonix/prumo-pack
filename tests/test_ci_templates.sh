@@ -194,8 +194,9 @@ gates_all_named() {
 }
 
 # verify_runs_first <file>: in the code, comments aside, the vendored verifier
-# is named before any gate. A verifier that runs after a gate verified nothing
-# that gate used.
+# is invoked before any gate is invoked. Compared by invocation path, so a
+# step label or job name that reads "prumo-trace" is not mistaken for a run of
+# that gate. A verifier that runs after a gate verified nothing that gate used.
 verify_runs_first() {
   python3 - "$PACK_ROOT/$1" <<'PY'
 import re, sys
@@ -206,11 +207,13 @@ for line in text.splitlines():
     line = re.sub(r"(^|[^:])//.*$", r"\1", line)
     lines.append(re.sub(r"(^|\s)#.*$", r"\1", line))
 text = "\n".join(lines)
-v = text.find("prumo-vendor-verify")
-gates = [text.find(g) for g in ("prumo-trace", "fail-closed.sh", "metabolic.sh", "anti-leak.sh")]
+v = text.find("bin/prumo-vendor-verify")
+gates = [text.find(g) for g in (
+    "bin/prumo-trace", "checks/fail-closed.sh",
+    "checks/metabolic.sh", "checks/anti-leak.sh")]
 gates = [g for g in gates if g >= 0]
 if v < 0:
-    print("no prumo-vendor-verify in the code")
+    print("no invocation of bin/prumo-vendor-verify in the code")
     sys.exit(1)
 if not gates:
     print("no gate named in the code")
@@ -314,6 +317,9 @@ check "the softened gate check bites on || true" 1 \
 printf 'sh "rm -rf build || true"\n' >"$D/t/cleanup.groovy"
 check "a cleanup || true is not a softened gate" 0 \
   env PACK_ROOT="$D" bash -c "$(declare -f no_soft_construct); no_soft_construct t/cleanup.groovy '$GATE_SOFTENED'"
+printf 'def g() {\n  sh "$V/bin/prumo-trace --root ."\n  sh "$V/bin/prumo-vendor-verify $V"\n}\nreturn this\n' >"$D/t/late.groovy"
+check "the verify-first check bites when a gate runs first" 1 \
+  env PACK_ROOT="$D" bash -c "$(declare -f verify_runs_first); verify_runs_first t/late.groovy"
 if command -v groovy >/dev/null 2>&1; then
   check "$JENKINS_VENDORED parses as Groovy" 0 \
     groovy -e "new GroovyShell().parse(new File('$PACK_ROOT/$JENKINS_VENDORED'))"
