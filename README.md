@@ -1,6 +1,7 @@
 # prumo-pack
 
-The Prumo gates, packaged to install in any repository (GitLab, GitHub or anything else).
+The Prumo gates, packaged to install in any repository (GitLab CI, GitHub Actions, Jenkins on
+Bitbucket Server, Bitbucket Pipelines, or anything else).
 One source, N consumers, instead of scripts copied by hand between projects.
 
 Prumo is an engineering paradigm for working with agents. The rule behind this pack:
@@ -10,7 +11,7 @@ real project.
 
 The paradigm itself, in full (chapters 1 to 9, English): [docs/whitepaper.md](docs/whitepaper.md).
 
-## Status (v0.1.0)
+## Status (v0.2.0)
 
 | Piece | Status |
 |---|---|
@@ -18,13 +19,14 @@ The paradigm itself, in full (chapters 1 to 9, English): [docs/whitepaper.md](do
 | `checks/fail-closed.sh` | Works, 12 tests |
 | `checks/metabolic.sh` | Works, 19 tests |
 | `checks/anti-leak.sh` | Works, 14 tests |
-| `bin/prumo-init` (scaffolds `.prumo/`, vendors the gates, wires CI, idempotent) | Works, 91 tests |
+| `bin/prumo-init` (scaffolds `.prumo/`, vendors the gates, wires CI, idempotent) | Works, 130 tests |
 | `bin/prumo-vendor-verify` (vendored gates against their MANIFEST) | Works, 27 tests |
-| `bin/prumo-certify` (file parity, live back end, rendered DOM) | Works, 35 tests plus 9 that need a browser |
-| CI templates (vendored and remote, GitLab and GitHub) | Structure tested, 52 tests plus 6 that need PyYAML; vendored jobs replayed locally from the YAML; not run on a real runner |
-| Claude Code plugin (skills and hooks) | Works, 91 tests; not loaded in a live session yet |
+| `bin/prumo-certify` (file parity, live back end, rendered DOM) | Works, 37 tests plus 9 that need a browser |
+| CI templates (vendored and remote; GitLab, GitHub, Jenkins, Bitbucket Pipelines) | Structure tested, 73 tests plus 7 that need PyYAML and 1 that needs a groovy interpreter; the vendored Jenkins and Bitbucket commands are replayed locally; no template has run on a real runner |
+| Claude Code plugin (skills and hooks) | Works, 121 tests; not loaded in a live session yet |
 
-Skipped tests are reported as skipped, never counted as passed.
+465 tests pass here (`bash tests/run.sh`), 17 of them skipped for a missing interpreter. Skipped
+tests are reported as skipped, never counted as passed.
 
 ## prumo-trace
 
@@ -141,7 +143,7 @@ usage error. `make leak` runs it over this pack with `ci/anti-leak.sha256`.
 Scaffolds `.prumo/` in a repository from `templates/.prumo/` and wires the gates into its CI.
 
 ```sh
-bin/prumo-init [--source vendor|remote] [--force-ci gitlab|github|none] /path/to/repo
+bin/prumo-init [--source vendor|remote] [--force-ci gitlab|github|jenkins|bitbucket|none] /path/to/repo
 ```
 
 It creates each missing file and keeps each existing one byte for byte, printing `created` or
@@ -159,15 +161,28 @@ change what runs. The vendor directory belongs to the pack: a rerun replaces it 
 which is how it is upgraded or restored. The pack must be a git checkout, or init refuses.
 `--source remote` keeps the older form, where CI fetches the pack at tag `v0`.
 
-CI is detected: `.gitlab-ci.yml` means GitLab, `.github/` means GitHub, both means both.
+CI is detected: `.gitlab-ci.yml` means GitLab, `.github/workflows/` means GitHub Actions, a
+`Jenkinsfile` at the root or under `pipelines/` means Jenkins, `bitbucket-pipelines.yml` means
+Bitbucket Cloud. Several means several, and each is wired. A `.github/` directory with no
+`workflows/` inside is not Actions: it runs nothing, and counting it would report a repository
+wired that is not.
 
 - **GitLab:** gets `include: - local: .prumo/vendor/ci/gitlab.yml` (vendor) or the remote
   include of `templates/ci/gitlab/prumo.yml` at tag `v0` (remote), added once. An existing block list `include:` gets one more item. Any other `include:` form is
   refused, with the snippet to add by hand.
 - **GitHub:** gets `templates/ci/github/prumo-vendored.yml` (vendor) or
   `templates/ci/github/prumo.yml` (remote) copied to `.github/workflows/prumo.yml`.
-- **No CI detected:** refused. Gates that no CI runs are decorative Prumo. `--force-ci gitlab`
-  or `--force-ci github` creates the CI file; `--force-ci none` accepts it with a warning.
+- **Jenkins:** vendored only. The groovy goes to `.prumo/vendor/ci/jenkins.groovy` and the
+  `stage('Prumo')` to paste is printed. `prumo-init` never edits Groovy: rewriting someone's
+  pipeline is not this tool's call, and a wrong edit there stays invisible until a build runs.
+  A `Jenkinsfile` that already loads the groovy is reported `kept` and left alone.
+- **Bitbucket Cloud:** vendored only, for the same reason as Jenkins, a runner cannot fetch a
+  private pack without a token. `--force-ci bitbucket` creates `bitbucket-pipelines.yml` from
+  the template in a repository that has none. An existing file that does not run the gates is
+  refused with the steps to add by hand, and `--force-ci` does not override that refusal:
+  overwriting a pipeline someone wrote would destroy their work to install a gate.
+- **No CI detected:** refused. Gates that no CI runs are decorative Prumo. `--force-ci gitlab`,
+  `github`, `jenkins` or `bitbucket` wires one; `--force-ci none` accepts it with a warning.
 
 A refusal writes nothing. Exits 0 when done, 1 on a refusal, 2 on a usage error.
 
@@ -178,6 +193,10 @@ repository's invariants or subsystems, and an empty declaration must not pass.
 
 **Limit:** the GitLab edit is line based. It extends only a top level block list `include:`,
 and it takes any mention of `templates/ci/gitlab/prumo.yml` in the file as "already wired".
+Jenkins wiring is a printed snippet, so the gate exists only once someone pastes it, and a
+`Jenkinsfile` that mentions the vendored groovy anywhere counts as already wired. Bitbucket
+refuses an existing file instead of merging into it, for the same reason GitLab refuses an
+`include:` form it cannot extend.
 
 ## prumo-certify
 
@@ -255,8 +274,34 @@ per declared file (a file the site serves but the build no longer holds is not s
 
 **Vendored (default).** `prumo-init` writes them; nothing to copy by hand. Every job first runs
 `.prumo/vendor/bin/prumo-vendor-verify`: a missing, changed, re-moded or unlisted file fails the
-job before any gate runs. Variables (GitLab) or the workflow `env` block (GitHub) set
+job before any gate runs. Variables (GitLab), the workflow `env` block (GitHub), `withEnv`
+(Jenkins) or a defaulted shell variable (Bitbucket) set `PRUMO_VENDOR_DIR`,
 `PRUMO_FAIL_CLOSED_DIRS`, `PRUMO_ANTI_LEAK` and `PRUMO_ANTI_LEAK_ARGS`, as below.
+
+**Jenkins, on Bitbucket Server or anywhere else.** `templates/ci/jenkins/prumo-vendored.groovy`
+is vendored to `.prumo/vendor/ci/jenkins.groovy` and exports one entry point:
+
+```groovy
+stage('Prumo') {
+  steps {
+    script {
+      def prumo = load '.prumo/vendor/ci/jenkins.groovy'
+      prumo.prumoGates()
+    }
+  }
+}
+```
+
+`prumoGates()` runs vendor-verify, then trace, fail-closed, metabolic and, when
+`PRUMO_ANTI_LEAK` is `on`, anti-leak, each a `sh` step of its own inside one `withEnv`. There is
+no `catchError` and no `unstable()`: a gate that fails fails the build. Deployment stages must
+come after it (`dependsOn` inside a `parallel` block), or the gate is a log line nobody reads.
+
+**Bitbucket Cloud.** `templates/ci/bitbucket/prumo-vendored.yml` becomes the repository's
+`bitbucket-pipelines.yml`: four steps, `prumo-trace`, `prumo-fail-closed`, `prumo-metabolic` and
+`prumo-anti-leak`, each verifying the vendored copy before it runs a gate. Bitbucket expands no
+anchor across sections, so gating pull requests as well means repeating the four steps under a
+`pull-requests:` section.
 
 **Limit of the MANIFEST:** it lives in the same repository as the files it describes. It stops
 drift and accidents; an edit that also rewrites the MANIFEST passes. Branch protection with a
@@ -285,10 +330,17 @@ The project needs `.prumo/regression-rules/` and `.prumo/subsystems.yml`; the ch
 without them.
 
 **Limit:** the templates are checked for structure, script paths and the absence of soft
-failure, not executed on a real runner by this pack's tests. The vendored jobs were replayed
-locally from their YAML in a fresh clone of a consumer (green, and red on one tampered byte).
-While this repository is private, the remote form cannot be read by a GitLab runner or by a
-GitHub repository of another owner; the vendored form has no such limit.
+failure, not executed on a real runner by this pack's tests. The vendored commands are replayed
+locally instead: the Jenkins `sh` payloads and the Bitbucket `script:` lines are extracted from
+the template and run inside a wired consumer (green, and red on one tampered byte of the vendor
+directory), and the GitLab case runs the same vendored binaries directly. What a replay cannot
+prove is the runner: the agent label, the checkout, whether that Jenkins installation lets a
+stage fail, or whether a Bitbucket step timeout arrives first.
+
+Jenkins and Bitbucket Cloud have no remote form, and `--source remote` with either is refused: a
+runner that must fetch the pack needs a token and network access to this repository, and needing
+neither is the point of the vendored form. While this repository is private, the remote form
+cannot be read by a GitLab runner or by a GitHub repository of another owner either.
 
 ## agent/claude-plugin
 
@@ -299,10 +351,12 @@ cannot read (bad JSON, missing fields, unparsable command) blocks rather than al
 | Hook | Tools | Blocks |
 |---|---|---|
 | `no_em_dash.py` | Write, Edit, MultiEdit | new text containing U+2014 |
-| `protected_push.py` | Bash | `git push` updating main, master or develop: explicit refspec (`main`, `+main`, `HEAD:main`, `:main`, `--delete main`, wildcards), `--all`/`--mirror`, or no refspec while the current branch or its upstream is protected |
-| `ci_soft_fail.py` | Write, Edit, MultiEdit | `.gitlab-ci.yml`, `*.gitlab-ci.yml` or `.github/workflows/*.yml` gaining `allow_failure: true` or `continue-on-error: true` (or `${{ }}`) |
+| `protected_push.py` | Bash | `git push` updating main, master, develop or any `release/*` branch: explicit refspec (`main`, `+main`, `HEAD:main`, `:main`, `--delete main`, wildcards), `--all`/`--mirror`, or no refspec while the current branch or its upstream is protected. A glob entry is matched with fnmatch, a literal entry exactly, and a wildcard refspec that cannot be proved to miss a protected glob is refused |
+| `ci_soft_fail.py` | Write, Edit, MultiEdit | `.gitlab-ci.yml`, `*.gitlab-ci.yml`, `.github/workflows/*.yml`, `bitbucket-pipelines.yml` or any `Jenkinsfile` gaining `allow_failure: true`, `continue-on-error: true` (or `${{ }}`), `catchError` without `buildResult: FAILURE`, `unstable()`, a `currentBuild.result` that is not a failure, a `returnStatus: true` whose variable nothing reads, or a Prumo gate followed by `\|\|` (`\|\| exit 1` excepted, cleanup lines excepted) |
 
-`PRUMO_PROTECTED_BRANCHES="main,release"` replaces the protected list (empty keeps the default).
+`PRUMO_PROTECTED_BRANCHES="main,release/*"` replaces the protected list (empty keeps the
+default). An entry containing `*`, `?` or `[` is a glob; anything else is an exact branch name,
+so `release` protects only a branch called `release`.
 `git push --dry-run` is allowed: the remote is not updated.
 
 Skills: `prumo-certify-before-done`, `prumo-trace`, `prumo-worktree`. `CLAUDE.fragment.md` is a
@@ -317,7 +371,8 @@ claude plugin validate agent/claude-plugin  # manifest check
 scripts, `remote.<name>.push` config or variables (a refspec with `$` blocks); it does not stop
 merges through `gh`/`glab` or the web UI. The CI hook does not see files written through Bash
 (`sed -i`, `echo >>`). Branch protection on the server stays the real gate; these hooks stop the
-agent earlier.
+agent earlier. The CI hook reads Groovy as text, not as a parse tree: a `catchError` assembled
+from strings, or a soft failure inside a shared library the `Jenkinsfile` calls, is not seen.
 
 ## Development
 
