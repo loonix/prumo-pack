@@ -202,6 +202,8 @@ check_output "push inside bash -c is blocked" 2 "main" push "bash -c 'git push o
 check_output "--all is blocked (pushes every branch)" 2 "--all" push "git push --all origin"
 check_output "--mirror is blocked" 2 "--mirror" push "git push --mirror origin"
 check_output "wildcard refspec that covers main is blocked" 2 "main" push "git push origin 'refs/heads/*:refs/heads/*'"
+check_output "a wildcard that cannot be proved to miss release/* is blocked" 2 "release/*" \
+  push "git push origin 'refs/heads/feature/*:refs/heads/feature/*'"
 check_output "unresolvable \$BRANCH is blocked" 2 "cannot resolve" push 'git push origin $BRANCH'
 check_output "bare git push on main is blocked" 2 "main" push "git push" "$MAIN"
 check_output "git push origin with no refspec on main is blocked" 2 "main" push "git push origin" "$MAIN"
@@ -227,6 +229,9 @@ check "release-candidate is not release/*" 0 push "git push origin release-candi
 check "hotfix/x is not release/*" 0 push "git push origin hotfix/x"
 PRUMO_PROTECTED_BRANCHES="release/*" \
   check "a glob protects only what it matches" 0 push "git push origin main"
+PRUMO_PROTECTED_BRANCHES="main, master" \
+  check "a wildcard refspec passes when no protected entry is a glob" 0 \
+  push "git push origin 'refs/heads/feature/*:refs/heads/feature/*'"
 REL="$(repo release/2.0)"
 check_output "a bare push on release/2.0 is blocked" 2 "release/2.0" push "git push" "$REL"
 check "--dry-run to main passes (the remote is not touched)" 0 push "git push --dry-run origin main"
@@ -332,6 +337,18 @@ check_output "bitbucket-pipelines.yml is guarded" 2 "|| true" \
         script:
           - .prumo/vendor/bin/prumo-trace --root . || true
 '
+check_output "currentBuild.result set to UNSTABLE is blocked" 2 "currentBuild.result" \
+  ci Write /r/Jenkinsfile 'sh "make test"
+currentBuild.result = "UNSTABLE"
+'
+check_output "a gate softened with || echo is blocked" 2 "softened" \
+  ci Write /r/.gitlab-ci.yml 'test:
+  script:
+    - bin/prumo-trace --root . || echo "ignored, moving on"
+'
+check_output "a gate piped into tee and then softened is blocked" 2 "softened" \
+  ci Write /r/Jenkinsfile 'sh ".prumo/vendor/bin/prumo-trace --root . | tee gates.log || true"
+'
 
 echo "ci hook: allows"
 check "a checked returnStatus passes" 0 \
@@ -356,6 +373,15 @@ check "make test || true is not a Prumo gate" 0 \
   ci Write /r/.gitlab-ci.yml 'test:
   script:
     - make lint || true
+'
+check "a gate that fails again with || exit 1 passes" 0 \
+  ci Write /r/.gitlab-ci.yml 'test:
+  script:
+    - bin/prumo-trace --root . || exit 1
+'
+check "currentBuild.result set to FAILURE passes" 0 \
+  ci Write /r/Jenkinsfile 'sh "make test"
+currentBuild.result = "FAILURE"
 '
 
 echo "ci hook: allows (continued)"

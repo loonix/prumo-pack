@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """PreToolUse on Bash: block `git push` that would update a protected branch.
 
-Protected by default: main, master, develop. PRUMO_PROTECTED_BRANCHES (comma or
-space separated) replaces the list; an empty value keeps the default, so the
-gate cannot be switched off by an empty variable.
+Protected by default: main, master, develop and release/*.
+PRUMO_PROTECTED_BRANCHES (comma or space separated) replaces the list; an empty
+value keeps the default, so the gate cannot be switched off by an empty
+variable. An entry may be a glob, matched with fnmatch against the branch name:
+`release/*` covers `release/1.2` and not `release-candidate`. A glob that never
+matched anything would protect nothing while reading like it did, so a wildcard
+entry is compared as a pattern and a literal name is compared exactly.
 
 What counts as a push to a protected branch:
 - an explicit refspec whose destination is protected: `main`, `+main`,
@@ -30,7 +34,8 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _common import block, read_event  # noqa: E402
 
-DEFAULT = ["main", "master", "develop"]
+DEFAULT = ["main", "master", "develop", "release/*"]
+GLOB_CHARS = "*?["
 SEPARATORS = {";", "&&", "||", "|", "&", "\n", "(", ")", "|&", ";;"}
 SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
 # git options (before the subcommand) that take the next token as value.
@@ -44,6 +49,27 @@ def protected_list():
     raw = os.environ.get("PRUMO_PROTECTED_BRANCHES", "")
     names = [n for n in re.split(r"[,\s]+", raw) if n]
     return names or DEFAULT
+
+
+def is_glob(pattern):
+    return any(c in pattern for c in GLOB_CHARS)
+
+
+def is_protected(name, protected):
+    """True when a branch name is covered by the protected list.
+
+    An entry with a glob character is matched as a pattern; anything else is
+    compared exactly, so `release` protects the branch called release and
+    nothing else. Comparing a glob literally is the failure this avoids: it
+    reads like protection and matches no branch that ever exists.
+    """
+    for p in protected:
+        if is_glob(p):
+            if fnmatch.fnmatchcase(name, p):
+                return True
+        elif name == p:
+            return True
+    return False
 
 
 def tokenize(command):
@@ -139,15 +165,22 @@ def check_push(args, cwd, protected):
             targets.extend(implicit_targets(cwd))
             continue
         dst = strip_heads(dst)
-        if any(ch in dst for ch in "*?["):
+        if is_glob(dst):
             hit = [p for p in protected if fnmatch.fnmatchcase(p, dst)]
             if hit:
                 return "wildcard refspec %r covers protected branch %s" % (spec, hit[0])
+            # Two globs cannot be proved disjoint by matching one against the
+            # other, and a bulk push that quietly carries a release branch is
+            # the expensive mistake. Refuse rather than guess.
+            globs = [p for p in protected if is_glob(p)]
+            if globs:
+                return ("wildcard refspec %r cannot be proved to miss the protected "
+                        "pattern %s" % (spec, globs[0]))
             continue
         targets.append(dst)
 
     for t in targets:
-        if t in protected:
+        if is_protected(t, protected):
             return "push to protected branch %s" % t
     return None
 
