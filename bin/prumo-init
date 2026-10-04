@@ -5,13 +5,18 @@
 # Never overwrites a file: each template file is created when missing and kept
 # when present, so a second run creates nothing and exits 0.
 #
-# CI is detected from the repository: .gitlab-ci.yml means GitLab, a .github/
-# directory means GitHub, both means both. Installing the gates with no CI to
-# run them is decorative Prumo, so no CI detected is a refusal unless
-# --force-ci says what to do:
-#   gitlab  create or extend .gitlab-ci.yml with the include
-#   github  create .github/workflows/prumo.yml
-#   none    scaffold .prumo/ and wire nothing (prints a warning)
+# CI is detected from the repository: .gitlab-ci.yml means GitLab, a
+# .github/workflows/ directory means GitHub Actions, a Jenkinsfile at the root
+# or under pipelines/ means Jenkins, bitbucket-pipelines.yml means Bitbucket
+# Cloud. A .github/ directory alone is not CI: it may hold nothing but issue
+# templates or a stray .DS_Store. Installing the gates with no CI to run them
+# is decorative Prumo, so no CI detected is a refusal unless --force-ci says
+# what to do:
+#   gitlab    create or extend .gitlab-ci.yml with the include
+#   github    create .github/workflows/prumo.yml
+#   jenkins   vendor the groovy and print the stage to paste (never edits Groovy)
+#   bitbucket create bitbucket-pipelines.yml when the repository has none
+#   none      scaffold .prumo/ and wire nothing (prints a warning)
 #
 # --source picks where CI gets the gates from:
 #   vendor  (default) the gates are copied into .prumo/vendor/ with a MANIFEST
@@ -31,10 +36,22 @@
 # GitHub: .github/workflows/prumo.yml is created from
 # templates/ci/github/prumo-vendored.yml (vendor) or templates/ci/github/prumo.yml
 # (remote, a call to the reusable workflow of the pack).
+# Jenkins: vendored only. A Jenkins agent usually cannot read a private pack
+# (no token, often no route out), so --source remote is refused for it. The
+# groovy is copied to .prumo/vendor/ci/jenkins.groovy and the stage to paste is
+# printed: a Jenkinsfile is Groovy, and rewriting someone's pipeline code is
+# not this tool's call. A Jenkinsfile that already loads the groovy is reported
+# kept and left alone; every other Jenkinsfile keeps getting the snippet until
+# it is pasted in.
+# Bitbucket Cloud: vendored only, for the same reason. bitbucket-pipelines.yml
+# is created from templates/ci/bitbucket/prumo-vendored.yml when the repository
+# has none. Bitbucket expands no include, so an existing file is never
+# rewritten: that is a refusal with the steps to merge by hand.
 #
 # Checks run before any write: a refusal leaves the repository untouched.
 #
-# Usage: bin/prumo-init [--source vendor|remote] [--force-ci gitlab|github|none] <repo>
+# Usage: bin/prumo-init [--source vendor|remote]
+#                      [--force-ci gitlab|github|jenkins|bitbucket|none] <repo>
 # Exit:  0 ok, 1 refusal, 2 usage error.
 set -euo pipefail
 
@@ -43,12 +60,20 @@ TEMPLATES="$HERE/../templates/.prumo"
 PACK="$(cd "$HERE/.." && pwd)"
 GITLAB_TEMPLATE="templates/ci/gitlab/prumo.yml"
 GITHUB_WORKFLOW=".github/workflows/prumo.yml"
+BITBUCKET_FILE="bitbucket-pipelines.yml"
+BITBUCKET_TEMPLATE="templates/ci/bitbucket/prumo-vendored.yml"
 VENDOR=".prumo/vendor"
+JENKINS_GROOVY="$VENDOR/ci/jenkins.groovy"
+JENKINS_TEMPLATE="templates/ci/jenkins/prumo-vendored.groovy"
+# Templates whose contents land inside .prumo/vendor/, so the MANIFEST covers
+# them and a dirty one is recorded in it. The GitHub and Bitbucket templates
+# become the repository's own CI file instead, like the GitLab remote include.
+VENDORED_TEMPLATES="templates/ci/gitlab/prumo-vendored.yml $JENKINS_TEMPLATE"
 # Everything a vendored pipeline runs. ci/gitlab.yml comes from
-# templates/ci/gitlab/prumo-vendored.yml.
+# templates/ci/gitlab/prumo-vendored.yml, ci/jenkins.groovy from $JENKINS_TEMPLATE.
 VENDOR_FILES="bin/prumo-trace bin/prumo-vendor-verify lib/prumo_trace.py checks/fail-closed.sh checks/metabolic.sh checks/anti-leak.sh"
 
-USAGE="usage: bin/prumo-init [--source vendor|remote] [--force-ci gitlab|github|none] <repo>"
+USAGE="usage: bin/prumo-init [--source vendor|remote] [--force-ci gitlab|github|jenkins|bitbucket|none] <repo>"
 usage() {
   echo "$USAGE" >&2
   exit 2
@@ -62,9 +87,9 @@ while [ "$#" -gt 0 ]; do
     --force-ci)
       [ "$#" -ge 2 ] || usage
       case "$2" in
-        gitlab | github | none) force="$2" ;;
+        gitlab | github | jenkins | bitbucket | none) force="$2" ;;
         *)
-          echo "prumo-init: --force-ci takes gitlab|github|none, not '$2'." >&2
+          echo "prumo-init: --force-ci takes gitlab|github|jenkins|bitbucket|none, not '$2'." >&2
           usage
           ;;
       esac
@@ -106,23 +131,56 @@ if [ ! -d "$TEMPLATES" ] || [ -z "$(find "$TEMPLATES" -type f | head -1)" ]; the
   exit 1
 fi
 
+# jenkins_files <repo>: the repository-relative paths of the Jenkinsfiles, at
+# the root or under pipelines/, sorted. One file per pipeline is normal, so
+# this can be several.
+jenkins_files() {
+  local r="$1" f
+  for f in "$r/Jenkinsfile" "$r"/Jenkinsfile.* "$r/pipelines/Jenkinsfile" "$r"/pipelines/Jenkinsfile.*; do
+    if [ -f "$f" ]; then printf '%s\n' "${f#"$r"/}"; fi
+  done | LC_ALL=C sort
+}
+
 wire_gitlab=0
 wire_github=0
+wire_jenkins=0
+wire_bitbucket=0
 case "$force" in
   gitlab) wire_gitlab=1 ;;
   github) wire_github=1 ;;
+  jenkins) wire_jenkins=1 ;;
+  bitbucket) wire_bitbucket=1 ;;
   none) ;;
   "")
     if [ -f "$repo/.gitlab-ci.yml" ]; then wire_gitlab=1; fi
-    if [ -d "$repo/.github" ]; then wire_github=1; fi
-    if [ "$wire_gitlab" = 0 ] && [ "$wire_github" = 0 ]; then
-      echo "prumo-init: REFUSED, no CI detected in $repo (no .gitlab-ci.yml, no .github/)." >&2
-      echo "Gates that no CI runs are decorative Prumo. Pass --force-ci gitlab or" >&2
-      echo "--force-ci github to create the CI file, or --force-ci none to accept it." >&2
+    # A .github/ directory alone is not Actions: only workflows/ runs anything.
+    if [ -d "$repo/.github/workflows" ]; then wire_github=1; fi
+    if [ -n "$(jenkins_files "$repo")" ]; then wire_jenkins=1; fi
+    if [ -f "$repo/$BITBUCKET_FILE" ]; then wire_bitbucket=1; fi
+    if [ "$wire_gitlab" = 0 ] && [ "$wire_github" = 0 ] &&
+      [ "$wire_jenkins" = 0 ] && [ "$wire_bitbucket" = 0 ]; then
+      echo "prumo-init: REFUSED, no CI detected in $repo (no .gitlab-ci.yml, no" >&2
+      echo ".github/workflows/, no Jenkinsfile, no $BITBUCKET_FILE)." >&2
+      echo "Gates that no CI runs are decorative Prumo. Pass --force-ci gitlab, github," >&2
+      echo "jenkins or bitbucket to wire one, or --force-ci none to accept it." >&2
       exit 1
     fi
     ;;
 esac
+
+# Jenkins and Bitbucket Cloud run the gates from the vendored copy: an agent
+# that cannot read a private pack has nothing to fetch, so --source remote is
+# refused here rather than producing a pipeline that dies on its first step.
+if [ "$source" = remote ] && { [ "$wire_jenkins" = 1 ] || [ "$wire_bitbucket" = 1 ]; }; then
+  ci_name="Jenkins"
+  if [ "$wire_jenkins" = 0 ]; then ci_name="Bitbucket Cloud"; fi
+  echo "prumo-init: REFUSED, $ci_name runs the gates from a copy vendored into the repository." >&2
+  echo "The runner cannot fetch a private pack (no token, often no route out), so" >&2
+  echo "--source remote has nothing to point at. Run prumo-init again with the default" >&2
+  echo "--source vendor: the gates are copied into $VENDOR/ and the pipeline verifies" >&2
+  echo "them against their MANIFEST before it runs any of them." >&2
+  exit 1
+fi
 
 # gitlab <plan|apply> <file>: plan prints the action (create, keep, append,
 # insert) or refuses with exit 1; apply performs it.
@@ -199,7 +257,7 @@ if [ "$source" = vendor ]; then
   fi
   pack_commit="$(git -C "$PACK" rev-parse HEAD)"
   # shellcheck disable=SC2086
-  if [ -n "$(git -C "$PACK" status --porcelain -- $VENDOR_FILES templates/ci/gitlab/prumo-vendored.yml)" ]; then
+  if [ -n "$(git -C "$PACK" status --porcelain -- $VENDOR_FILES $VENDORED_TEMPLATES)" ]; then
     pack_dirty="yes"
   fi
 fi
@@ -207,6 +265,31 @@ fi
 gitlab_action=""
 if [ "$wire_gitlab" = 1 ]; then
   gitlab_action="$(gitlab plan "$repo/.gitlab-ci.yml")" || exit 1
+fi
+
+# Bitbucket Cloud expands no include, so an existing pipelines file is never
+# rewritten: the steps are merged by hand, and the next run stages the vendor
+# copy they run from. Planned before any write, like the GitLab include, so a
+# refusal leaves the repository untouched.
+bitbucket_action=""
+if [ "$wire_bitbucket" = 1 ]; then
+  bf="$repo/$BITBUCKET_FILE"
+  if [ ! -e "$bf" ] && [ ! -L "$bf" ]; then
+    bitbucket_action="create"
+  elif [ -f "$bf" ] && grep -qF 'bin/prumo-vendor-verify' "$bf"; then
+    bitbucket_action="keep"
+  else
+    echo "prumo-init: REFUSED, $bf exists and runs no Prumo gate." >&2
+    echo "Bitbucket Cloud expands no include, so this tool never rewrites a pipelines" >&2
+    echo "file: merge the Prumo steps into it by hand and run prumo-init again, which" >&2
+    echo "then stages $VENDOR/ for those steps to run from." >&2
+    echo "" >&2
+    echo "  The steps to copy are in:" >&2
+    echo "    $PACK/$BITBUCKET_TEMPLATE" >&2
+    echo "  Each one verifies $VENDOR/ against its MANIFEST before it runs a gate, and" >&2
+    echo "  the leak gate stays off until PRUMO_ANTI_LEAK is set to on." >&2
+    exit 1
+  fi
 fi
 
 created=0
@@ -242,6 +325,11 @@ stage_vendor() {
   done
   mkdir -p "$d/ci"
   cp "$PACK/templates/ci/gitlab/prumo-vendored.yml" "$d/ci/gitlab.yml"
+  # The groovy is staged only for a repository that runs Jenkins, so a GitLab
+  # or GitHub project does not carry a file no pipeline loads.
+  if [ "$wire_jenkins" = 1 ]; then
+    cp "$PACK/$JENKINS_TEMPLATE" "$d/ci/jenkins.groovy"
+  fi
   {
     echo "# prumo-pack vendored gates. Written by prumo-init; rerun it, do not edit."
     echo "format 1"
@@ -303,6 +391,37 @@ if [ "$wire_github" = 1 ]; then
   fi
 fi
 
+# Jenkins: never write Groovy. A Jenkinsfile that already loads the vendored
+# gates is reported kept and left alone; the ones that do not are collected and
+# get the stage to paste printed at the end, every run, until it is pasted in.
+jenkins_paste=""
+if [ "$wire_jenkins" = 1 ]; then
+  jenkins_list="$(jenkins_files "$repo")"
+  if [ -z "$jenkins_list" ]; then
+    jenkins_paste=" a Jenkinsfile (this repository has none yet)"
+  else
+    while IFS= read -r jf; do
+      if [ -z "$jf" ]; then continue; fi
+      if grep -qF "$JENKINS_GROOVY" "$repo/$jf" && grep -qF 'prumoGates' "$repo/$jf"; then
+        report kept "$jf"
+      elif [ -n "$jenkins_paste" ]; then
+        jenkins_paste="$jenkins_paste, $jf"
+      else
+        jenkins_paste=" $jf"
+      fi
+    done <<<"$jenkins_list"
+  fi
+fi
+
+case "$bitbucket_action" in
+  "") ;;
+  keep) report kept "$BITBUCKET_FILE" ;;
+  create)
+    cp "$PACK/$BITBUCKET_TEMPLATE" "$repo/$BITBUCKET_FILE"
+    report created "$BITBUCKET_FILE"
+    ;;
+esac
+
 printf 'prumo-init: %d created, %d updated, %d kept.\n' "$created" "$updated" "$kept"
 if [ "$force" = "none" ]; then
   echo "prumo-init: WARNING, --force-ci none: no CI wired. The gates bite only once CI runs them." >&2
@@ -315,6 +434,23 @@ if [ "$source" = vendor ]; then
   if [ "$pack_dirty" = yes ]; then
     echo "prumo-init: WARNING, the pack has uncommitted changes in vendored files; the MANIFEST says so." >&2
   fi
+fi
+if [ -n "$jenkins_paste" ]; then
+  echo "next: paste this stage into$jenkins_paste; prumo-init never edits Groovy."
+  echo ""
+  echo "  stage('Prumo') {"
+  echo "    steps {"
+  echo "      script {"
+  echo "        def prumo = load '$JENKINS_GROOVY'"
+  echo "        prumo.prumoGates()"
+  echo "      }"
+  echo "    }"
+  echo "  }"
+  echo ""
+  echo "      A deploy stage must depend on it: a gate nothing waits for is decoration."
+fi
+if [ "$bitbucket_action" = create ]; then
+  echo "next: $BITBUCKET_FILE runs the gates on every branch; deployment steps must come after them."
 fi
 if [ "$created" -gt 0 ]; then
   echo "next: prumo-trace fails until a test is tagged with the id CORE-01 (or the rule is replaced),"
