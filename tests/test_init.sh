@@ -14,15 +14,22 @@ FC="$PACK_ROOT/checks/fail-closed.sh"
 GITLAB_FILE="templates/ci/gitlab/prumo.yml"
 GITHUB_USES="loonix/prumo-pack/.github/workflows/prumo.yml@v0"
 
-# repo <ci>: a new repository with a GitLab file, a .github/ directory, both or
-# nothing.
+# repo <ci>: a new repository with a GitLab file, a GitHub workflows directory,
+# a Jenkinsfile (at the root or under pipelines/), a bitbucket-pipelines.yml,
+# several of those, or nothing.
 repo() {
   local d
   d="$(tmpdir)"
   case "$1" in
     gitlab) printf 'stages: [test]\n' >"$d/.gitlab-ci.yml" ;;
-    github) mkdir -p "$d/.github" ;;
-    both) printf 'stages: [test]\n' >"$d/.gitlab-ci.yml"; mkdir -p "$d/.github" ;;
+    # A .github/ directory alone is not GitHub CI: it may hold only issue
+    # templates or a stray .DS_Store. Only workflows/ means Actions run.
+    github) mkdir -p "$d/.github/workflows" ;;
+    github-empty) mkdir -p "$d/.github"; printf 'x' >"$d/.github/.DS_Store" ;;
+    jenkins) printf 'pipeline {\n  stages { }\n}\n' >"$d/Jenkinsfile" ;;
+    jenkins-dir) mkdir -p "$d/pipelines"; printf 'pipeline {\n}\n' >"$d/pipelines/Jenkinsfile.build" ;;
+    bitbucket) printf 'pipelines:\n  default:\n    - step:\n        script:\n          - echo hi\n' >"$d/bitbucket-pipelines.yml" ;;
+    both) printf 'stages: [test]\n' >"$d/.gitlab-ci.yml"; mkdir -p "$d/.github/workflows" ;;
     none) ;;
   esac
   printf '%s' "$d"
@@ -74,7 +81,7 @@ echo "usage errors"
 check_output "no argument is a usage error" 2 "usage" "$I"
 check_output "missing repository is a usage error" 2 "does not exist" "$I" "$(tmpdir)/nope"
 check_output "unknown flag is a usage error" 2 "usage" "$I" --bogus "$(repo gitlab)"
-check_output "unknown --force-ci value is a usage error" 2 "gitlab|github|none" "$I" --force-ci jenkins "$(repo none)"
+check_output "unknown --force-ci value is a usage error" 2 "gitlab|github|jenkins|bitbucket|none" "$I" --force-ci travis "$(repo none)"
 check_output "--force-ci without a value is a usage error" 2 "usage" "$I" --force-ci
 check_output "two repositories is a usage error" 2 "usage" "$I" "$(repo gitlab)" "$(repo gitlab)"
 
@@ -160,7 +167,7 @@ check "both: GitHub wired" 0 test -f "$D/.github/workflows/prumo.yml"
 
 D="$(repo github)"
 check "--force-ci gitlab wires only GitLab" 0 "$I" --force-ci gitlab "$D"
-check "--force-ci gitlab leaves .github alone" 0 test ! -e "$D/.github/workflows"
+check "--force-ci gitlab leaves .github alone" 0 test ! -e "$D/.github/workflows/prumo.yml"
 
 echo "existing files are never overwritten"
 D="$(repo gitlab)"
@@ -195,5 +202,26 @@ printf '  - name: billing\n    path: src/billing\n    usage_metric: invoices cre
 check_output "subsystems filled by the user pass metabolic" 0 "1 subsystem(s) declared" "$M" "$D"
 printf 'def serve():\n    return 0\n' >"$D/src/billing/app.py"
 check_output "comment-only fail-closed.patterns is accepted" 0 "fail-closed: OK" "$FC" "$D"
+
+echo "Jenkins and Bitbucket need the vendored source"
+D="$(repo jenkins)"
+check_output "a Jenkinsfile is detected, remote wiring is refused" 1 "vendor" "$I" "$D"
+check "that refusal writes nothing" 0 no_prumo "$D"
+D="$(repo jenkins-dir)"
+check_output "a Jenkinsfile under pipelines/ is detected too" 1 "vendor" "$I" "$D"
+check "that refusal writes nothing" 0 no_prumo "$D"
+D="$(repo bitbucket)"
+check_output "bitbucket-pipelines.yml is detected, remote wiring is refused" 1 "vendor" "$I" "$D"
+check "that refusal writes nothing" 0 no_prumo "$D"
+D="$(repo none)"
+check_output "--force-ci jenkins is refused with --source remote" 1 "vendor" "$I" --force-ci jenkins "$D"
+check_output "--force-ci bitbucket is refused with --source remote" 1 "vendor" "$I" --force-ci bitbucket "$D"
+
+echo "a .github/ with no workflows/ is not GitHub CI"
+D="$(repo github-empty)"
+check_output "a .github/ holding only a stray file is refused" 1 "no CI detected" "$I" "$D"
+check "that refusal writes nothing" 0 no_prumo "$D"
+check_output "--force-ci github still creates the workflow" 0 "created .github/workflows/prumo.yml" \
+  "$I" --force-ci github "$D"
 
 finish

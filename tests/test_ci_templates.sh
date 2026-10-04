@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # CI templates: the GitLab include, the GitHub reusable workflow, its consumer
-# stub and the pack's own CI. A template that parses but cannot fail, or that
+# stub, the Jenkins groovy, the Bitbucket Cloud pipelines file and the pack's
+# own CI. A template that parses but cannot fail, or that
 # calls a script the pack does not ship, is a gate that bites nothing.
 . "$(dirname "$0")/lib.sh"
 
@@ -10,7 +11,11 @@ GH_STUB="templates/ci/github/prumo.yml"
 GH_CI=".github/workflows/ci.yml"
 GITLAB_VENDORED="templates/ci/gitlab/prumo-vendored.yml"
 GH_VENDORED="templates/ci/github/prumo-vendored.yml"
-TEMPLATES="$GITLAB $GH_REUSABLE $GH_STUB $GH_CI $GITLAB_VENDORED $GH_VENDORED"
+JENKINS_VENDORED="templates/ci/jenkins/prumo-vendored.groovy"
+BITBUCKET_VENDORED="templates/ci/bitbucket/prumo-vendored.yml"
+# The YAML templates: structure check, PyYAML parse when available, soft failure
+# grep. The groovy template is not YAML, so it gets the checks below instead.
+TEMPLATES="$GITLAB $GH_REUSABLE $GH_STUB $GH_CI $GITLAB_VENDORED $GH_VENDORED $BITBUCKET_VENDORED"
 
 # Scripts built in parallel on other branches (anti-leak has landed, the other
 # two may not have). A template may call them before they land; any other
@@ -146,6 +151,100 @@ sys.exit(0 if m and re.search(r"^  workflow_call:", m.group(1), re.M) else 1)
 PY
 }
 
+# strip_comments <text>: drops /* */ blocks, // lines (keeping https://) and #
+# lines, so a documented example is not counted as a construct.
+# groovy_structure <file>: no Groovy interpreter is guaranteed on a runner, so
+# this is a stdlib structural check, not a parser: non-empty, no tab, balanced
+# braces/parens/brackets outside strings and comments, at least one def, and a
+# trailing `return this` so `load` can call the methods.
+groovy_structure() {
+  python3 - "$PACK_ROOT/$1" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+errors = []
+if not text.strip():
+    errors.append("empty file")
+if "\t" in text:
+    errors.append("tab character")
+stripped = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+stripped = re.sub(r"//[^\n]*", " ", stripped)
+stripped = re.sub(r"'(?:\\.|[^'\\])*'", "''", stripped)
+stripped = re.sub(r'"(?:\\.|[^"\\])*"', '""', stripped)
+for o, c in (("{", "}"), ("(", ")"), ("[", "]")):
+    if stripped.count(o) != stripped.count(c):
+        errors.append("unbalanced %s%s: %d vs %d" % (o, c, stripped.count(o), stripped.count(c)))
+if not re.search(r"^\s*def\s+\w+", text, re.M):
+    errors.append("no def: nothing for `load` to call")
+if not re.search(r"^return this\s*$", text, re.M):
+    errors.append("no trailing `return this`, so `load` returns null")
+for e in errors:
+    print(e)
+sys.exit(1 if errors else 0)
+PY
+}
+
+# gates_all_named <file>: the file names the four gates and the vendored
+# verifier. A template that runs three of them is a gate that quietly dropped.
+gates_all_named() {
+  local f="$PACK_ROOT/$1" g
+  [ -f "$f" ] || return 2
+  for g in bin/prumo-vendor-verify bin/prumo-trace checks/fail-closed.sh checks/metabolic.sh checks/anti-leak.sh; do
+    grep -qF -- "$g" "$f" || { echo "does not name $g"; return 1; }
+  done
+}
+
+# verify_runs_first <file>: in the code, comments aside, the vendored verifier
+# is named before any gate. A verifier that runs after a gate verified nothing
+# that gate used.
+verify_runs_first() {
+  python3 - "$PACK_ROOT/$1" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+lines = []
+for line in text.splitlines():
+    line = re.sub(r"(^|[^:])//.*$", r"\1", line)
+    lines.append(re.sub(r"(^|\s)#.*$", r"\1", line))
+text = "\n".join(lines)
+v = text.find("prumo-vendor-verify")
+gates = [text.find(g) for g in ("prumo-trace", "fail-closed.sh", "metabolic.sh", "anti-leak.sh")]
+gates = [g for g in gates if g >= 0]
+if v < 0:
+    print("no prumo-vendor-verify in the code")
+    sys.exit(1)
+if not gates:
+    print("no gate named in the code")
+    sys.exit(1)
+late = [g for g in gates if g < v]
+if late:
+    print("%d gate(s) run before the verifier" % len(late))
+    sys.exit(1)
+PY
+}
+
+# no_soft_construct <file> <regex>: no code line matches, comments stripped.
+# Exit 0 clean, 1 a hit (the hits are printed), 2 no such file.
+no_soft_construct() {
+  [ -f "$PACK_ROOT/$1" ] || return 2
+  python3 - "$PACK_ROOT/$1" "$2" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+rx = re.compile(sys.argv[2])
+hits = []
+for line in text.splitlines():
+    line = re.sub(r"(^|[^:])//.*$", r"\1", line)
+    line = re.sub(r"(^|\s)#.*$", r"\1", line)
+    if rx.search(line):
+        hits.append(line.strip())
+for h in hits:
+    print(h)
+sys.exit(1 if hits else 0)
+PY
+}
+
+GATE_SOFTENED='(prumo-trace|prumo-vendor-verify|prumo-certify|fail-closed\.sh|metabolic\.sh|anti-leak\.sh)[^|]*\|\| *(true|:)'
+
 echo "templates exist and are structurally sound"
 for t in $TEMPLATES; do
   check "$t exists" 0 test -f "$PACK_ROOT/$t"
@@ -192,6 +291,51 @@ for t in $GITLAB_VENDORED $GH_VENDORED; do
   check "$t reaches no network for the pack" 1 grep -nE '^[^#]*(remote:|git (clone|fetch)|repository: *loonix)' "$PACK_ROOT/$t"
 done
 check "$GH_VENDORED gates anti-leak on a step, not a job level env if" 1 grep -qE '^    if: env\.' "$PACK_ROOT/$GH_VENDORED"
+
+echo "jenkins template"
+check "$JENKINS_VENDORED exists" 0 test -f "$PACK_ROOT/$JENKINS_VENDORED"
+check "$JENKINS_VENDORED is structurally sound" 0 groovy_structure "$JENKINS_VENDORED"
+check "$JENKINS_VENDORED names only shipped or pending scripts" 0 script_refs_resolve "$JENKINS_VENDORED"
+check "$JENKINS_VENDORED names every gate and the verifier" 0 gates_all_named "$JENKINS_VENDORED"
+check "$JENKINS_VENDORED verifies the MANIFEST before any gate" 0 verify_runs_first "$JENKINS_VENDORED"
+check "$JENKINS_VENDORED has no catchError" 0 no_soft_construct "$JENKINS_VENDORED" 'catchError'
+check "$JENKINS_VENDORED has no unstable call" 0 no_soft_construct "$JENKINS_VENDORED" 'unstable\('
+check "$JENKINS_VENDORED never softens a gate with || true" 0 no_soft_construct "$JENKINS_VENDORED" "$GATE_SOFTENED"
+check "$JENKINS_VENDORED reaches no network for the pack" 1 \
+  grep -nE 'remote:|git (clone|fetch)|raw\.githubusercontent|repository: *loonix' "$PACK_ROOT/$JENKINS_VENDORED"
+D="$(tmpdir)"
+mkdir -p "$D/t"
+printf 'stage("x") {\n  catchError(buildResult: "SUCCESS") { sh "y" }\n}\n' >"$D/t/bad.groovy"
+check "the soft construct check bites on catchError" 1 \
+  env PACK_ROOT="$D" bash -c "$(declare -f no_soft_construct); no_soft_construct t/bad.groovy catchError"
+printf 'sh "bin/prumo-trace --root . || true"\n' >"$D/t/soft.groovy"
+check "the softened gate check bites on || true" 1 \
+  env PACK_ROOT="$D" bash -c "$(declare -f no_soft_construct); no_soft_construct t/soft.groovy '$GATE_SOFTENED'"
+printf 'sh "rm -rf build || true"\n' >"$D/t/cleanup.groovy"
+check "a cleanup || true is not a softened gate" 0 \
+  env PACK_ROOT="$D" bash -c "$(declare -f no_soft_construct); no_soft_construct t/cleanup.groovy '$GATE_SOFTENED'"
+if command -v groovy >/dev/null 2>&1; then
+  check "$JENKINS_VENDORED parses as Groovy" 0 \
+    groovy -e "new GroovyShell().parse(new File('$PACK_ROOT/$JENKINS_VENDORED'))"
+else
+  skip "$JENKINS_VENDORED parses as Groovy" "no groovy interpreter on PATH, only the structural check ran"
+fi
+
+echo "bitbucket template"
+check "$BITBUCKET_VENDORED names every gate and the verifier" 0 gates_all_named "$BITBUCKET_VENDORED"
+check "$BITBUCKET_VENDORED verifies the MANIFEST before any gate" 0 verify_runs_first "$BITBUCKET_VENDORED"
+check "$BITBUCKET_VENDORED declares pipelines at the top level" 0 grep -qE '^pipelines:' "$PACK_ROOT/$BITBUCKET_VENDORED"
+check "$BITBUCKET_VENDORED never softens a gate with || true" 0 no_soft_construct "$BITBUCKET_VENDORED" "$GATE_SOFTENED"
+# Every step verifies the vendored copy before it runs a gate: a step that
+# skips the verify runs whatever happens to be on disk.
+check "$BITBUCKET_VENDORED verifies in every step" 0 python3 -c "
+import sys
+text = open(sys.argv[1], encoding='utf-8').read()
+steps = text.count('- step:')
+verifies = text.count('prumo-vendor-verify')
+print('%d step(s), %d verify' % (steps, verifies))
+sys.exit(0 if steps and steps == verifies else 1)
+" "$PACK_ROOT/$BITBUCKET_VENDORED"
 
 echo "reusable workflow"
 check "$GH_REUSABLE declares workflow_call" 0 declares_workflow_call "$GH_REUSABLE"

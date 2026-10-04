@@ -14,7 +14,15 @@ repo() {
   d="$(tmpdir)"
   case "$1" in
     gitlab) printf 'stages: [test]\n' >"$d/.gitlab-ci.yml" ;;
-    github) mkdir -p "$d/.github" ;;
+    github) mkdir -p "$d/.github/workflows" ;;
+    jenkins) printf 'pipeline {\n  stages { }\n}\n' >"$d/Jenkinsfile" ;;
+    jenkins-dir) mkdir -p "$d/pipelines"; printf 'pipeline {\n}\n' >"$d/pipelines/Jenkinsfile.build" ;;
+    jenkins-wired)
+      printf "pipeline {\n  stages {\n    stage('Prumo') {\n      steps {\n        script {\n" >"$d/Jenkinsfile"
+      printf "          def prumo = load '.prumo/vendor/ci/jenkins.groovy'\n          prumo.prumoGates()\n" >>"$d/Jenkinsfile"
+      printf "        }\n      }\n    }\n  }\n}\n" >>"$d/Jenkinsfile"
+      ;;
+    bitbucket) printf 'pipelines:\n  default:\n    - step:\n        script:\n          - echo hi\n' >"$d/bitbucket-pipelines.yml" ;;
     none) ;;
   esac
   printf '%s' "$d"
@@ -95,5 +103,73 @@ printf 'def serve():\n    return 0\n' >"$D/src/billing/app.py"
 check_output "vendored trace passes, vendor code not traced" 0 "1 declared" bash -c "cd '$D' && $V/bin/prumo-trace --root ."
 check_output "vendored metabolic passes" 0 "1 subsystem(s) declared" bash -c "cd '$D' && $V/checks/metabolic.sh ."
 check_output "vendored fail-closed passes" 0 "fail-closed: OK" bash -c "cd '$D' && $V/checks/fail-closed.sh ."
+
+echo "Jenkins, vendored"
+D="$(repo jenkins)"
+cp "$D/Jenkinsfile" "$D/jenkinsfile.orig"
+check_output "a Jenkinsfile is detected and the gates vendored" 0 "created $V/MANIFEST" "$I" "$D"
+check "the vendored MANIFEST verifies" 0 "$D/$V/bin/prumo-vendor-verify"
+check "Jenkins groovy vendored byte for byte" 0 same_bytes templates/ci/jenkins/prumo-vendored.groovy "$D/$V/ci/jenkins.groovy"
+check "the Jenkinsfile is never edited" 0 cmp "$D/Jenkinsfile" "$D/jenkinsfile.orig"
+check_output "the snippet to paste names the vendored groovy" 0 "$V/ci/jenkins.groovy" "$I" "$D"
+check_output "the snippet names the entry point" 0 "prumoGates" "$I" "$D"
+before="$(snapshot "$D")"; "$I" "$D" >/dev/null 2>&1; after="$(snapshot "$D")"
+check "second Jenkins run changes not one byte" 0 test "$before" = "$after"
+
+D="$(repo jenkins-dir)"
+check_output "a Jenkinsfile under pipelines/ is detected" 0 "created $V/MANIFEST" "$I" "$D"
+check "groovy vendored for a Jenkinsfile under pipelines/" 0 test -f "$D/$V/ci/jenkins.groovy"
+
+D="$(repo jenkins-wired)"
+check_output "a Jenkinsfile that already loads the groovy is reported kept" 0 "kept Jenkinsfile" "$I" "$D"
+
+echo "the vendored Jenkins gates replay locally"
+# replay <repo>: runs every unconditional `sh '...'` payload of the vendored
+# groovy inside the repository, with the environment the template sets. The
+# anti-leak payload is left out because the template runs it only when
+# PRUMO_ANTI_LEAK is "on"; a case below proves that gate sits behind the if.
+replay() {
+  local d="$1" cmds rc=0 c
+  cmds="$(python3 - "$d/$V/ci/jenkins.groovy" <<'PY'
+import re, sys
+for m in re.finditer(r"sh\s+'([^']*)'", open(sys.argv[1], encoding="utf-8").read()):
+    if "anti-leak.sh" not in m.group(1):
+        print(m.group(1))
+PY
+)"
+  [ -n "$cmds" ] || { echo "no sh payload found in the groovy"; return 1; }
+  while IFS= read -r c; do
+    (cd "$d" && PRUMO_VENDOR_DIR="$V" PRUMO_FAIL_CLOSED_DIRS="." PRUMO_ANTI_LEAK="off" \
+      PRUMO_ANTI_LEAK_ARGS="." sh -c "$c") || rc=1
+  done <<<"$cmds"
+  return "$rc"
+}
+D="$(repo jenkins)"
+"$I" "$D" >/dev/null 2>&1
+mkdir -p "$D/tests" "$D/src/billing"
+printf '#!/bin/sh\n# PRUMO: CORE-01\ntest "$(echo ok)" = ok\n' >"$D/tests/core_test.sh"
+printf '  - name: billing\n    path: src/billing\n    usage_metric: invoices per day\n    since: 2026-09-01\n' >>"$D/.prumo/subsystems.yml"
+printf 'def serve():\n    return 0\n' >"$D/src/billing/app.py"
+check "a wired repository passes every Jenkins gate on replay" 0 replay "$D"
+check "the anti-leak gate sits behind PRUMO_ANTI_LEAK" 0 \
+  grep -qE 'if \(.*PRUMO_ANTI_LEAK.*== *.on.' "$D/$V/ci/jenkins.groovy"
+printf 'X' >>"$D/$V/lib/prumo_trace.py"
+check "a drifted vendor directory fails the replay before any gate" 1 replay "$D"
+check_output "rerun restores the drifted vendor directory" 0 "updated $V" "$I" "$D"
+check "the restored vendor directory replays green again" 0 replay "$D"
+
+echo "Bitbucket Cloud, vendored"
+D="$(repo bitbucket)"
+cp "$D/bitbucket-pipelines.yml" "$D/pipelines.orig"
+check_output "an unwired bitbucket-pipelines.yml is refused with the snippet" 1 "by hand" "$I" "$D"
+check "the existing pipelines file is left byte for byte" 0 cmp "$D/bitbucket-pipelines.yml" "$D/pipelines.orig"
+check "that refusal writes nothing" 0 test ! -e "$D/.prumo"
+check_output "--force-ci bitbucket does not override that refusal" 1 "by hand" "$I" --force-ci bitbucket "$D"
+D="$(repo none)"
+check_output "--force-ci bitbucket creates bitbucket-pipelines.yml" 0 "created bitbucket-pipelines.yml" "$I" --force-ci bitbucket "$D"
+check "the created file is the vendored template byte for byte" 0 same_bytes templates/ci/bitbucket/prumo-vendored.yml "$D/bitbucket-pipelines.yml"
+check "bitbucket-pipelines.yml reaches no network" 0 no_network "$D/bitbucket-pipelines.yml"
+check "the MANIFEST verifies in a Bitbucket repository" 0 "$D/$V/bin/prumo-vendor-verify"
+check_output "second Bitbucket run is a no-op" 0 "kept bitbucket-pipelines.yml" "$I" "$D"
 
 finish

@@ -210,6 +210,11 @@ check_output "cd into a repo on main then bare push is blocked" 2 "main" push "c
 check_output "bare push of a branch whose upstream is main is blocked" 2 "main" push "git push" "$TRACKS_MAIN"
 PRUMO_PROTECTED_BRANCHES="release, main" \
   check_output "PRUMO_PROTECTED_BRANCHES adds a branch" 2 "release" push "git push origin release"
+check_output "release/1.2 is blocked by default" 2 "release/1.2" push "git push origin release/1.2"
+check_output "HEAD:release/x is blocked" 2 "release" push "git push origin HEAD:release/x"
+check_output "deleting release/9.9 is blocked" 2 "release" push "git push origin :release/9.9"
+PRUMO_PROTECTED_BRANCHES="hotfix/*" \
+  check_output "a glob in PRUMO_PROTECTED_BRANCHES matches" 2 "hotfix" push "git push origin hotfix/x"
 
 echo "push hook: allows"
 check "push to a feature branch passes" 0 push "git push origin feature/x"
@@ -218,6 +223,12 @@ check "bare git push on a feature branch passes" 0 push "git push" "$FEATURE"
 check "main:feature pushes to feature and passes" 0 push "git push origin main:feature"
 check "maintenance is not main" 0 push "git push origin maintenance"
 check "pushing a tag passes" 0 push "git push origin v1.0"
+check "release-candidate is not release/*" 0 push "git push origin release-candidate"
+check "hotfix/x is not release/*" 0 push "git push origin hotfix/x"
+PRUMO_PROTECTED_BRANCHES="release/*" \
+  check "a glob protects only what it matches" 0 push "git push origin main"
+REL="$(repo release/2.0)"
+check_output "a bare push on release/2.0 is blocked" 2 "release/2.0" push "git push" "$REL"
 check "--dry-run to main passes (the remote is not touched)" 0 push "git push --dry-run origin main"
 check "-n to main passes" 0 push "git push -n origin main"
 check "git pull origin main passes" 0 push "git pull origin main"
@@ -282,7 +293,72 @@ check_output "Write adding a second soft fail over an existing file is blocked" 
 check_output "MultiEdit introducing a soft fail is blocked" 2 "allow_failure" \
   hook ci_soft_fail.py '{"tool_name":"MultiEdit","tool_input":{"file_path":"/r/.gitlab-ci.yml","edits":[{"old_string":"a","new_string":"b"},{"old_string":"c","new_string":"allow_failure: true"}]}}'
 
+echo "ci hook: Jenkins and Bitbucket"
+J_CATCH='stage("build") {
+  catchError(buildResult: "SUCCESS") { sh "./gradlew test" }
+}
+'
+check_output "a Jenkinsfile gaining catchError is blocked" 2 "catchError" \
+  ci Write /r/Jenkinsfile "$J_CATCH"
+check_output "a Jenkinsfile under pipelines/ is guarded" 2 "catchError" \
+  ci Write /r/pipelines/Jenkinsfile.build "$J_CATCH"
+check_output "a Jenkinsfile.e2e suffix is guarded" 2 "catchError" \
+  ci Write /r/Jenkinsfile.e2e "$J_CATCH"
+check_output "an unstable call is blocked" 2 "unstable" \
+  ci Write /r/Jenkinsfile 'sh "make test"
+unstable("flaky")
+'
+check_output "an unchecked returnStatus is blocked" 2 "returnStatus" \
+  ci Write /r/Jenkinsfile 'def rc = sh(returnStatus: true, script: "./gate.sh")
+'
+check_output "a gate softened with || true is blocked in a Jenkinsfile" 2 "|| true" \
+  ci Write /r/Jenkinsfile 'sh ".prumo/vendor/bin/prumo-trace --root . || true"
+'
+check_output "a gate softened with || true is blocked in GitLab YAML" 2 "|| true" \
+  ci Write /r/.gitlab-ci.yml 'test:
+  script:
+    - bin/prumo-trace --root . || true
+'
+check_output "a gate softened with || true is blocked in a GitHub workflow" 2 "|| true" \
+  ci Write /r/.github/workflows/ci.yml 'jobs:
+  t:
+    steps:
+      - run: ./checks/metabolic.sh . || true
+'
+check_output "bitbucket-pipelines.yml is guarded" 2 "|| true" \
+  ci Write /r/bitbucket-pipelines.yml 'pipelines:
+  default:
+    - step:
+        script:
+          - .prumo/vendor/bin/prumo-trace --root . || true
+'
+
 echo "ci hook: allows"
+check "a checked returnStatus passes" 0 \
+  ci Write /r/Jenkinsfile 'def rc = sh(returnStatus: true, script: "./gate.sh")
+if (rc != 0) { error "gate failed with $rc" }
+'
+check "a cleanup || true passes, it softens no gate" 0 \
+  ci Write /r/Jenkinsfile 'sh "rm -rf build || true"
+sh "chmod -R 755 out || true"
+sh "security delete-keychain x || true"
+'
+check "a commented Groovy soft failure passes" 0 \
+  ci Write /r/Jenkinsfile '// catchError(buildResult: "SUCCESS") { sh "x" }
+sh "make test"
+'
+check "Edit keeping an existing catchError passes" 0 \
+  ci Edit /r/Jenkinsfile 'catchError(buildResult: "SUCCESS") { sh "b" }' \
+  'catchError(buildResult: "SUCCESS") { sh "a" }'
+check "a shared library groovy file is not a Jenkinsfile" 0 \
+  ci Write /r/vars/build.groovy "$J_CATCH"
+check "make test || true is not a Prumo gate" 0 \
+  ci Write /r/.gitlab-ci.yml 'test:
+  script:
+    - make lint || true
+'
+
+echo "ci hook: allows (continued)"
 check "allow_failure: false passes" 0 ci Write /r/.gitlab-ci.yml "$HARD"
 check "a commented soft fail passes" 0 ci Write /r/.gitlab-ci.yml '# allow_failure: true
 test:
