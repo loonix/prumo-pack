@@ -114,6 +114,33 @@ elif what.startswith("skills:"):
         fail("missing skills: %s" % ", ".join(missing))
     print("skills ok: %d" % len(found))
 
+elif what == "marketplace":
+    # The marketplace catalog lives at the pack root, two levels above the plugin.
+    pack = os.path.dirname(os.path.dirname(os.path.abspath(root)))
+    path = os.path.join(pack, ".claude-plugin", "marketplace.json")
+    try:
+        m = json.load(open(path, encoding="utf-8"))
+    except Exception as e:
+        fail("marketplace.json does not parse: %s" % e)
+    name = m.get("name", "")
+    if not re.match(r"^[a-z0-9][a-z0-9-]*$", name):
+        fail("marketplace name %r is not kebab-case" % name)
+    if not (m.get("owner") or {}).get("name"):
+        fail("owner.name missing")
+    plugins = m.get("plugins") or []
+    entries = [p for p in plugins if p.get("name") == "prumo"]
+    if len(entries) != 1:
+        fail("want exactly one plugin named prumo, got %d" % len(entries))
+    e = entries[0]
+    if e.get("source") != "./agent/claude-plugin":
+        fail("prumo source is %r, want './agent/claude-plugin'" % e.get("source"))
+    if not os.path.isfile(os.path.join(pack, e["source"], ".claude-plugin", "plugin.json")):
+        fail("source does not resolve to a plugin")
+    # plugin.json and VERSION are the only version; a second copy here drifts.
+    if "version" in e:
+        fail("marketplace entry carries a version; plugin.json is the single source")
+    print("marketplace ok: %s/prumo" % name)
+
 else:
     fail("unknown check %s" % what)
 PY
@@ -121,6 +148,7 @@ PY
 
 echo "plugin structure"
 check_output "plugin.json parses, name prumo, version from VERSION" 0 "manifest ok" plugin_check manifest
+check_output "marketplace.json lists prumo from ./agent/claude-plugin, no second version" 0 "marketplace ok" plugin_check marketplace
 check_output "hooks.json parses and every command file exists" 0 "hooks ok" plugin_check hooks
 check_output "Write routes to the em-dash hook" 0 "routes to" plugin_check routes:Write:no_em_dash.py
 check_output "Edit routes to the em-dash hook" 0 "routes to" plugin_check routes:Edit:no_em_dash.py
