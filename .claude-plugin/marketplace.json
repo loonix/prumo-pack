@@ -1,0 +1,16 @@
+{
+  "name": "prumo-pack",
+  "owner": {
+    "name": "Daniel Carneiro"
+  },
+  "description": "Prumo gates for Claude Code, installable as a plugin.",
+  "plugins": [
+    {
+      "name": "prumo",
+      "source": "./agent/claude-plugin",
+      "description": "Mechanical PreToolUse hooks (no LLM calls) and method skills: blocks the em dash, pushes to protected branches and soft-failing CI jobs.",
+      "license": "MIT",
+      "repository": "https://github.com/loonix/prumo-pack"
+    }
+  ]
+}
