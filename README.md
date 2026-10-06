@@ -23,7 +23,7 @@ The paradigm itself, in full (chapters 1 to 9, English): [docs/whitepaper.md](do
 | `bin/prumo-vendor-verify` (vendored gates against their MANIFEST) | Works, 27 tests |
 | `bin/prumo-certify` (file parity, live back end, rendered DOM) | Works, 37 tests plus 9 that need a browser |
 | CI templates (vendored and remote; GitLab, GitHub, Jenkins, Bitbucket Pipelines) | Structure tested, 73 tests plus 7 that need PyYAML and 1 that needs a groovy interpreter; the vendored Jenkins and Bitbucket commands are replayed locally; no template has run on a real runner |
-| Claude Code plugin (skills and hooks) | Works, 122 tests; the three hooks blocked in a live `--plugin-dir` session; installs through the repo's marketplace |
+| Claude Code plugin (skills and hooks) | Works, 122 tests; all three hooks blocked in a live `--plugin-dir` session, and `no_em_dash` again through the plugin installed from this marketplace |
 
 466 tests pass here (`bash tests/run.sh`), 17 of them skipped for a missing interpreter. Skipped
 tests are reported as skipped, never counted as passed.
@@ -377,6 +377,11 @@ claude --plugin-dir agent/claude-plugin     # one session, no install
 claude plugin validate agent/claude-plugin  # plugin manifest check
 claude plugin validate .                    # marketplace manifest check
 ```
+
+**Limit:** the install is user scope. Declaring the marketplace in a project
+`.claude/settings.json` (`extraKnownMarketplaces` plus `enabledPlugins`) did not register it on
+claude 2.1.285, in either source shape, so `claude plugin list` showed no `prumo` and the hooks
+never loaded: a Write carrying U+2014 went through. Run `claude plugin marketplace add` instead.
 
 **Limit:** hooks see only what the tool call says. The push hook does not follow git aliases,
 scripts, `remote.<name>.push` config or variables (a refspec with `$` blocks); it does not stop
