@@ -23,9 +23,9 @@ The paradigm itself, in full (chapters 1 to 9, English): [docs/whitepaper.md](do
 | `bin/prumo-vendor-verify` (vendored gates against their MANIFEST) | Works, 27 tests |
 | `bin/prumo-certify` (file parity, live back end, rendered DOM) | Works, 37 tests plus 9 that need a browser |
 | CI templates (vendored and remote; GitLab, GitHub, Jenkins, Bitbucket Pipelines) | Structure tested, 73 tests plus 7 that need PyYAML and 1 that needs a groovy interpreter; the vendored Jenkins and Bitbucket commands are replayed locally; no template has run on a real runner |
-| Claude Code plugin (skills and hooks) | Works, 121 tests; not loaded in a live session yet |
+| Claude Code plugin (skills and hooks) | Works, 122 tests; the three hooks blocked in a live `--plugin-dir` session; installs through the repo's marketplace |
 
-465 tests pass here (`bash tests/run.sh`), 17 of them skipped for a missing interpreter. Skipped
+466 tests pass here (`bash tests/run.sh`), 17 of them skipped for a missing interpreter. Skipped
 tests are reported as skipped, never counted as passed.
 
 ## prumo-trace
@@ -362,9 +362,20 @@ so `release` protects only a branch called `release`.
 Skills: `prumo-certify-before-done`, `prumo-trace`, `prumo-worktree`. `CLAUDE.fragment.md` is a
 rules block to paste into a project's `CLAUDE.md`.
 
+Install it for every session (the repo root carries `.claude-plugin/marketplace.json`):
+
 ```sh
-claude --plugin-dir agent/claude-plugin     # one session
-claude plugin validate agent/claude-plugin  # manifest check
+claude plugin marketplace add loonix/prumo-pack
+claude plugin install prumo@prumo-pack
+```
+
+The installed version is the one in `plugin.json`, which follows `VERSION`; the marketplace entry
+carries no version of its own, so the two cannot drift.
+
+```sh
+claude --plugin-dir agent/claude-plugin     # one session, no install
+claude plugin validate agent/claude-plugin  # plugin manifest check
+claude plugin validate .                    # marketplace manifest check
 ```
 
 **Limit:** hooks see only what the tool call says. The push hook does not follow git aliases,
