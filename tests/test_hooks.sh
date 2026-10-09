@@ -18,7 +18,8 @@ hook() {
   printf '%s' "$2" | python3 "$H/$1"
 }
 
-# plugin_check <what>: structural checks on the plugin, in python3 stdlib.
+# plugin_check <what>: structural checks on the plugin and on the pack docs that
+# repeat its version, in python3 stdlib.
 plugin_check() {
   python3 - "$P" "$PACK_ROOT/VERSION" "$1" <<'PY'
 import json, os, re, sys
@@ -141,6 +142,25 @@ elif what == "marketplace":
         fail("marketplace entry carries a version; plugin.json is the single source")
     print("marketplace ok: %s/prumo" % name)
 
+elif what == "readme":
+    # The status heading carries a version by hand, and a hand-maintained copy
+    # rots: it read v0.2.0 while VERSION and plugin.json said 0.3.0. Check it
+    # against VERSION the way plugin.json is checked, so a release that forgets
+    # the heading fails instead of shipping a stale claim.
+    pack = os.path.dirname(os.path.dirname(os.path.abspath(root)))
+    path = os.path.join(pack, "README.md")
+    try:
+        text = open(path, encoding="utf-8").read()
+    except OSError as e:
+        fail("README.md does not read: %s" % e)
+    want = open(version_file, encoding="utf-8").read().strip()
+    m = re.search(r"^## Status \(v([0-9][0-9.]*)\)[ \t]*$", text, re.M)
+    if not m:
+        fail("README has no '## Status (vX.Y.Z)' heading")
+    if m.group(1) != want:
+        fail("README status heading says v%s, VERSION says %s" % (m.group(1), want))
+    print("readme ok: status heading v%s" % want)
+
 else:
     fail("unknown check %s" % what)
 PY
@@ -153,6 +173,11 @@ check_output "hooks.json parses and every command file exists" 0 "hooks ok" plug
 check_output "Write routes to the em-dash hook" 0 "routes to" plugin_check routes:Write:no_em_dash.py
 check_output "Edit routes to the em-dash hook" 0 "routes to" plugin_check routes:Edit:no_em_dash.py
 check_output "MultiEdit routes to the em-dash hook" 0 "routes to" plugin_check routes:MultiEdit:no_em_dash.py
+
+echo "pack docs"
+# Same ladder as plugin.json: the version is declared once, everything that
+# repeats it is checked against VERSION instead of trusted.
+check_output "README status heading carries the VERSION number" 0 "readme ok" plugin_check readme
 
 echo "em-dash hook: blocks"
 check_output "Write with raw U+2014 is blocked" 2 "U+2014" \
