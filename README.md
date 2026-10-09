@@ -26,8 +26,13 @@ The paradigm itself, in full (chapters 1 to 9, English): [docs/whitepaper.md](do
 | Claude Code plugin (skills and hooks) | Works, 123 tests; all three hooks blocked in a live `--plugin-dir` session, and `no_em_dash` again through the plugin installed from this marketplace |
 | Project-scope agent gates (`prumo-init` writes `.claude/settings.json`) | Works, 66 tests; the generated registration blocked an em dash Write and a push to `main` in a live session |
 
-532 tests pass here (`bash tests/run.sh`), 17 of them skipped for a missing interpreter. Skipped
-tests are reported as skipped, never counted as passed.
+`bash tests/run.sh` covers 550 tests. How many pass depends on which interpreters are present,
+so the figure is stated per environment rather than as one number: on `ubuntu-latest` in CI it is
+**540 passed, 0 failed, 10 skipped** (run 37944094077 at `130b961`), and on a machine without
+PyYAML it is **533 passed, 17 skipped**. The 7 test difference is `tests/test_ci_templates.sh`,
+which parses YAML when PyYAML is importable: 80 passed / 1 skipped in CI against 73 / 8 locally.
+The rest of the skips are the same in both, 9 browser tests in `test_certify.sh` and 1 that needs
+a groovy interpreter. Skipped tests are reported as skipped, never counted as passed.
 
 ## prumo-trace
 
