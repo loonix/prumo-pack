@@ -22,7 +22,7 @@ The paradigm itself, in full (chapters 1 to 9, English): [docs/whitepaper.md](do
 | `bin/prumo-init` (scaffolds `.prumo/`, vendors the gates, wires CI, idempotent) | Works, 130 tests |
 | `bin/prumo-vendor-verify` (vendored gates against their MANIFEST) | Works, 27 tests |
 | `bin/prumo-certify` (file parity, live back end, rendered DOM) | Works, 37 tests plus 9 that need a browser |
-| CI templates (vendored and remote; GitLab, GitHub, Jenkins, Bitbucket Pipelines) | Structure tested, 73 tests plus 7 that need PyYAML and 1 that needs a groovy interpreter; the vendored Jenkins and Bitbucket commands are replayed locally; no template has run on a real runner |
+| CI templates (vendored and remote; GitLab, GitHub, Jenkins, Bitbucket Pipelines) | Structure tested, 73 tests plus 7 that need PyYAML and 1 that needs a groovy interpreter; the vendored Jenkins and Bitbucket commands are replayed locally; the vendored GitHub template ran green on GitHub Actions (prumo-consumer-pilot run 37941907775, `main` at `ed576a3`), GitLab, Jenkins and Bitbucket have never run on a real runner |
 | Claude Code plugin (skills and hooks) | Works, 122 tests; all three hooks blocked in a live `--plugin-dir` session, and `no_em_dash` again through the plugin installed from this marketplace |
 | Project-scope agent gates (`prumo-init` writes `.claude/settings.json`) | Works, 66 tests; the generated registration blocked an em dash Write and a push to `main` in a live session |
 
@@ -354,13 +354,24 @@ and `pack_ref` equal.
 The project needs `.prumo/regression-rules/` and `.prumo/subsystems.yml`; the checks fail
 without them.
 
-**Limit:** the templates are checked for structure, script paths and the absence of soft
-failure, not executed on a real runner by this pack's tests. The vendored commands are replayed
-locally instead: the Jenkins `sh` payloads and the Bitbucket `script:` lines are extracted from
-the template and run inside a wired consumer (green, and red on one tampered byte of the vendor
-directory), and the GitLab case runs the same vendored binaries directly. What a replay cannot
-prove is the runner: the agent label, the checkout, whether that Jenkins installation lets a
-stage fail, or whether a Bitbucket step timeout arrives first.
+**Limit:** this pack's tests check the templates for structure, script paths and the absence of
+soft failure, and they do not execute them on a runner. The one exception is now observed rather
+than inferred: `prumo-init --source vendor` copies `templates/ci/github/prumo-vendored.yml` byte
+for byte into the consumer's `.github/workflows/prumo.yml` (GitHub Actions is detected from a
+`.github/workflows/` directory, or forced with `--force-ci github`), and that copy ran green on
+GitHub Actions in `loonix/prumo-consumer-pilot`. Run 37941907775 on `main` at `ed576a3`, four jobs
+(`prumo-metabolic`, `prumo-anti-leak`, `prumo-fail-closed`, `prumo-trace`) all `success`, each
+logging `prumo-vendor-verify: OK, 11 file(s) match MANIFEST (prumo-pack e5f6546, version 0.3.0)`.
+The earlier run 37939889338 at `c39f8d7` is green on the same four jobs. So for GitHub the agent
+label, the checkout and a job that really fails the build are observed.
+
+The vendored commands are still replayed locally, because a replay is what turns red on one
+tampered byte: the Jenkins `sh` payloads and the Bitbucket `script:` lines are extracted from the
+template and run inside a wired consumer (green, and red on one tampered byte of the vendor
+directory), and the GitLab case runs the same vendored binaries directly. What no replay proves
+is the runner. GitLab, Jenkins and Bitbucket Pipelines have never executed on a real runner here,
+so their agent label, whether that Jenkins installation lets a stage fail, and whether a
+Bitbucket step timeout arrives first all remain unverified.
 
 Jenkins and Bitbucket Cloud have no remote form, and `--source remote` with either is refused: a
 runner that must fetch the pack needs a token and network access to this repository, and needing
