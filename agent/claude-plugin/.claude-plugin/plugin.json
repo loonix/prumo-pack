@@ -1,6 +1,6 @@
 {
   "name": "prumo",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Prumo gates for Claude Code: mechanical PreToolUse hooks (no LLM calls) and method skills. Blocks the em dash, pushes to protected branches and soft-failing CI jobs.",
   "author": {
     "name": "Daniel Carneiro"
