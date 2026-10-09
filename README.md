@@ -11,7 +11,7 @@ real project.
 
 The paradigm itself, in full (chapters 1 to 9, English): [docs/whitepaper.md](docs/whitepaper.md).
 
-## Status (v0.2.0)
+## Status (v0.3.0)
 
 | Piece | Status |
 |---|---|
@@ -23,7 +23,7 @@ The paradigm itself, in full (chapters 1 to 9, English): [docs/whitepaper.md](do
 | `bin/prumo-vendor-verify` (vendored gates against their MANIFEST) | Works, 27 tests |
 | `bin/prumo-certify` (file parity, live back end, rendered DOM) | Works, 37 tests plus 9 that need a browser |
 | CI templates (vendored and remote; GitLab, GitHub, Jenkins, Bitbucket Pipelines) | Structure tested, 73 tests plus 7 that need PyYAML and 1 that needs a groovy interpreter; the vendored Jenkins and Bitbucket commands are replayed locally; the vendored GitHub template ran green on GitHub Actions (prumo-consumer-pilot run 37941907775, `main` at `ed576a3`), GitLab, Jenkins and Bitbucket have never run on a real runner |
-| Claude Code plugin (skills and hooks) | Works, 122 tests; all three hooks blocked in a live `--plugin-dir` session, and `no_em_dash` again through the plugin installed from this marketplace |
+| Claude Code plugin (skills and hooks) | Works, 123 tests; all three hooks blocked in a live `--plugin-dir` session, and `no_em_dash` again through the plugin installed from this marketplace |
 | Project-scope agent gates (`prumo-init` writes `.claude/settings.json`) | Works, 66 tests; the generated registration blocked an em dash Write and a push to `main` in a live session |
 
 532 tests pass here (`bash tests/run.sh`), 17 of them skipped for a missing interpreter. Skipped
