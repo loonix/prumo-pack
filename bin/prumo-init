@@ -48,10 +48,21 @@
 # has none. Bitbucket expands no include, so an existing file is never
 # rewritten: that is a refusal with the steps to merge by hand.
 #
+# Agent gates: with --source vendor the plugin's PreToolUse hooks are vendored
+# into .prumo/vendor/hooks/ and registered in the repository's
+# .claude/settings.json, so every Claude Code session opened in the repository
+# is gated and not only the machines that installed the plugin. A plugin install
+# is user scope, and a project settings file cannot enable one, so the hooks
+# block is the only path to repository-scope enforcement. Foreign keys and
+# foreign hooks in that file are preserved, a rerun writes nothing, and a prumo
+# hook deleted by hand comes back. --no-agent-hooks skips it; --source remote
+# cannot do it, a session hook has to be a file in the repository.
+#
 # Checks run before any write: a refusal leaves the repository untouched.
 #
 # Usage: bin/prumo-init [--source vendor|remote]
-#                      [--force-ci gitlab|github|jenkins|bitbucket|none] <repo>
+#                      [--force-ci gitlab|github|jenkins|bitbucket|none]
+#                      [--no-agent-hooks] <repo>
 # Exit:  0 ok, 1 refusal, 2 usage error.
 set -euo pipefail
 
@@ -72,8 +83,13 @@ VENDORED_TEMPLATES="templates/ci/gitlab/prumo-vendored.yml $JENKINS_TEMPLATE"
 # Everything a vendored pipeline runs. ci/gitlab.yml comes from
 # templates/ci/gitlab/prumo-vendored.yml, ci/jenkins.groovy from $JENKINS_TEMPLATE.
 VENDOR_FILES="bin/prumo-trace bin/prumo-vendor-verify lib/prumo_trace.py checks/fail-closed.sh checks/metabolic.sh checks/anti-leak.sh"
+# The plugin's PreToolUse hooks, vendored by directory glob so a new hook needs
+# no edit here. What gets registered comes from the plugin's own hooks.json
+# (lib/prumo_agent_hooks.py), so the two cannot drift.
+HOOKS_SRC="agent/claude-plugin/hooks"
+AGENT_SETTINGS=".claude/settings.json"
 
-USAGE="usage: bin/prumo-init [--source vendor|remote] [--force-ci gitlab|github|jenkins|bitbucket|none] <repo>"
+USAGE="usage: bin/prumo-init [--source vendor|remote] [--force-ci gitlab|github|jenkins|bitbucket|none] [--no-agent-hooks] <repo>"
 usage() {
   echo "$USAGE" >&2
   exit 2
@@ -81,6 +97,7 @@ usage() {
 
 force=""
 source="vendor"
+agent_hooks=1
 repo=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -105,6 +122,10 @@ while [ "$#" -gt 0 ]; do
           ;;
       esac
       shift 2
+      ;;
+    --no-agent-hooks)
+      agent_hooks=0
+      shift
       ;;
     -h | --help)
       echo "$USAGE"
@@ -257,7 +278,7 @@ if [ "$source" = vendor ]; then
   fi
   pack_commit="$(git -C "$PACK" rev-parse HEAD)"
   # shellcheck disable=SC2086
-  if [ -n "$(git -C "$PACK" status --porcelain -- $VENDOR_FILES $VENDORED_TEMPLATES)" ]; then
+  if [ -n "$(git -C "$PACK" status --porcelain -- $VENDOR_FILES $VENDORED_TEMPLATES $HOOKS_SRC)" ]; then
     pack_dirty="yes"
   fi
 fi
@@ -292,6 +313,14 @@ if [ "$wire_bitbucket" = 1 ]; then
   fi
 fi
 
+# The project-scope agent gates are planned before any write, like the CI ones,
+# so an unreadable .claude/settings.json refuses with the repository untouched.
+agent_hooks_action=""
+if [ "$source" = vendor ] && [ "$agent_hooks" = 1 ]; then
+  python3 "$PACK/lib/prumo_agent_hooks.py" check "$repo" "$VENDOR" || exit 1
+  agent_hooks_action="install"
+fi
+
 created=0
 updated=0
 kept=0
@@ -323,6 +352,15 @@ stage_vendor() {
     mkdir -p "$d/$(dirname "$f")"
     cp "$PACK/$f" "$d/$f"
   done
+  # Hooks are staged only when the agent gates are on. Files no session runs
+  # are dead weight, and the reverse (a registration whose scripts are absent)
+  # is worse: python3 on a missing file exits 2, which is the block code.
+  if [ "$agent_hooks" = 1 ]; then
+    mkdir -p "$d/hooks"
+    for f in "$PACK/$HOOKS_SRC"/*.py; do
+      cp "$f" "$d/hooks/"
+    done
+  fi
   mkdir -p "$d/ci"
   cp "$PACK/templates/ci/gitlab/prumo-vendored.yml" "$d/ci/gitlab.yml"
   # The groovy is staged only for a repository that runs Jenkins, so a GitLab
@@ -361,6 +399,16 @@ if [ "$source" = vendor ]; then
     mv "$stage/vendor" "$dest"
     report updated "$VENDOR/MANIFEST"
   fi
+fi
+
+if [ "$agent_hooks_action" = install ]; then
+  status="$(python3 "$PACK/lib/prumo_agent_hooks.py" install "$repo" "$VENDOR")" || exit 1
+  report "$status" "$AGENT_SETTINGS"
+elif [ "$source" = vendor ] && [ -f "$repo/$AGENT_SETTINGS" ]; then
+  # Opting out deregisters what an earlier run registered, so no hook is left
+  # pointing at a script this run did not vendor.
+  status="$(python3 "$PACK/lib/prumo_agent_hooks.py" uninstall "$repo" "$VENDOR")" || exit 1
+  report "$status" "$AGENT_SETTINGS"
 fi
 
 case "$gitlab_action" in
@@ -448,6 +496,23 @@ if [ -n "$jenkins_paste" ]; then
   echo "  }"
   echo ""
   echo "      A deploy stage must depend on it: a gate nothing waits for is decoration."
+fi
+if [ "$agent_hooks_action" = install ]; then
+  echo "next: $AGENT_SETTINGS gates every Claude Code session opened in this repository."
+  echo "      Commit it. A rerun restores a prumo hook deleted from it by hand."
+fi
+# A registration git ignores protects this machine alone, which is the decorative
+# Prumo the CI detection refuses. Not a refusal here: a repository may keep
+# .claude/ local on purpose, so it is said out loud instead of silently accepted.
+if [ "$agent_hooks_action" = install ] && git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 &&
+  git -C "$repo" check-ignore -q "$AGENT_SETTINGS"; then
+  echo "prumo-init: WARNING, $AGENT_SETTINGS is gitignored in this repository, so the agent" >&2
+  echo "      gates stay on this machine and reach nobody else. Unignore it, or accept that the" >&2
+  echo "      registration is never committed: a gate only one clone carries is decorative Prumo." >&2
+fi
+if [ "$source" = remote ] && [ "$agent_hooks" = 1 ]; then
+  echo "next: no agent gates installed, --source remote leaves no file in the"
+  echo "      repository for a session hook to run. Use --source vendor for them."
 fi
 if [ "$bitbucket_action" = create ]; then
   echo "next: $BITBUCKET_FILE runs the gates on every branch; deployment steps must come after them."
