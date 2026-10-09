@@ -24,8 +24,9 @@ The paradigm itself, in full (chapters 1 to 9, English): [docs/whitepaper.md](do
 | `bin/prumo-certify` (file parity, live back end, rendered DOM) | Works, 37 tests plus 9 that need a browser |
 | CI templates (vendored and remote; GitLab, GitHub, Jenkins, Bitbucket Pipelines) | Structure tested, 73 tests plus 7 that need PyYAML and 1 that needs a groovy interpreter; the vendored Jenkins and Bitbucket commands are replayed locally; no template has run on a real runner |
 | Claude Code plugin (skills and hooks) | Works, 122 tests; all three hooks blocked in a live `--plugin-dir` session, and `no_em_dash` again through the plugin installed from this marketplace |
+| Project-scope agent gates (`prumo-init` writes `.claude/settings.json`) | Works, 66 tests; the generated registration blocked an em dash Write and a push to `main` in a live session |
 
-466 tests pass here (`bash tests/run.sh`), 17 of them skipped for a missing interpreter. Skipped
+532 tests pass here (`bash tests/run.sh`), 17 of them skipped for a missing interpreter. Skipped
 tests are reported as skipped, never counted as passed.
 
 ## prumo-trace
@@ -143,7 +144,8 @@ usage error. `make leak` runs it over this pack with `ci/anti-leak.sha256`.
 Scaffolds `.prumo/` in a repository from `templates/.prumo/` and wires the gates into its CI.
 
 ```sh
-bin/prumo-init [--source vendor|remote] [--force-ci gitlab|github|jenkins|bitbucket|none] /path/to/repo
+bin/prumo-init [--source vendor|remote] [--force-ci gitlab|github|jenkins|bitbucket|none]
+               [--no-agent-hooks] /path/to/repo
 ```
 
 It creates each missing file and keeps each existing one byte for byte, printing `created` or
@@ -183,6 +185,29 @@ wired that is not.
   overwriting a pipeline someone wrote would destroy their work to install a gate.
 - **No CI detected:** refused. Gates that no CI runs are decorative Prumo. `--force-ci gitlab`,
   `github`, `jenkins` or `bitbucket` wires one; `--force-ci none` accepts it with a warning.
+
+`--source vendor` also installs the **agent gates**: the plugin's PreToolUse hooks are copied to
+`.prumo/vendor/hooks/` and registered in the repository's `.claude/settings.json`, so every
+Claude Code session opened in that repository is gated and not only the machines that installed
+the plugin. A plugin install is user scope, and a project settings file cannot enable one (see
+[agent/claude-plugin](#agentclaude-plugin)), so a plain `hooks` block is the only path to
+repository-scope enforcement. What to register is derived from the plugin's own
+`agent/claude-plugin/hooks/hooks.json`, so the plugin and the vendored registration cannot drift,
+and the vendored hooks fall under the same `MANIFEST` as the CI gates: stub one out and
+`prumo-vendor-verify` fails before a pipeline runs it.
+
+`--no-agent-hooks` skips the hooks and the registration, and a rerun with it deregisters what an
+earlier run registered. That is not cosmetic: a hook whose script is missing exits 2, and 2 is
+the block code, so a registration left pointing at an unvendored directory would refuse every
+tool call it matches. `--source remote` installs no agent gates either, since a session hook has
+to be a file in the repository.
+
+The merge is conservative and idempotent. Foreign keys and foreign hooks are preserved, an entry
+is extended only when every command in it is a prumo one, our commands are never duplicated, and
+a hook deleted by hand comes back on the next run. A `.claude/settings.json` that does not parse,
+or that is not a JSON object, is a refusal: this tool never rewrites a file it cannot read. When
+it does write, it writes the whole file with `json.dump(indent=2)`, which normalises the
+indentation of a hand-written one.
 
 A refusal writes nothing. Exits 0 when done, 1 on a refusal, 2 on a usage error.
 
@@ -389,6 +414,11 @@ merges through `gh`/`glab` or the web UI. The CI hook does not see files written
 (`sed -i`, `echo >>`). Branch protection on the server stays the real gate; these hooks stop the
 agent earlier. The CI hook reads Groovy as text, not as a parse tree: a `catchError` assembled
 from strings, or a soft failure inside a shared library the `Jenkinsfile` calls, is not seen.
+
+**Scope:** installing the plugin protects one user's machine. To gate every session opened in a
+repository, let `prumo-init` register the same hooks in that repository's `.claude/settings.json`
+from the copy it vendors. That is project scope, it needs no install, and it is what makes the
+gates a property of the repository instead of a property of whoever set it up.
 
 ## Development
 
