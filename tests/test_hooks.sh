@@ -458,6 +458,88 @@ check "allow_failure with exit_codes is not a blanket soft fail" 0 ci Write /r/.
 '
 check "a tool it does not guard passes" 0 hook ci_soft_fail.py '{"tool_name":"Read","tool_input":{"file_path":"/r/.gitlab-ci.yml"}}'
 
+echo "ci hook: task runners"
+printf 'test:\n    npm run test || true\n' >"$CI/Justfile"
+check_output "a Justfile gaining a softened test step is blocked" 2 "|| true" \
+  ci Write /r/Justfile 'test:
+    cd web && npm run test || true
+'
+check_output "a lowercase justfile is guarded" 2 "|| true" \
+  ci Write /r/justfile 'test:
+    npm run lint || true
+'
+check_output "a Makefile gaining a softened clippy is blocked" 2 "|| true" \
+  ci Write /r/Makefile 'lint:
+	cargo clippy --all-targets || true
+'
+check_output "a Taskfile.yml gaining a softened step is blocked" 2 "|| true" \
+  ci Write /r/Taskfile.yml 'tasks:
+  lint:
+    cmds:
+      - npm run lint || true
+'
+check_output "a Taskfile.yaml is guarded" 2 "|| true" \
+  ci Write /r/Taskfile.yaml 'tasks:
+  test:
+    cmds:
+      - pytest || true
+'
+check_output "package.json scripts gaining a softened test is blocked" 2 "|| true" \
+  ci Write /r/package.json '{"scripts": {"test": "vitest run || true"}}'
+check_output "a Prumo gate softened in a Justfile is blocked" 2 "Prumo gate" \
+  ci Write /r/Justfile 'trace:
+    bin/prumo-trace --root . || true
+'
+check_output "the make '-' prefix on a gate is blocked" 2 "ignores a gate" \
+  ci Write /r/Makefile 'test:
+	-cargo test --workspace
+'
+check_output "the just '-' prefix on a gate is blocked" 2 "ignores a gate" \
+  ci Write /r/Justfile 'test:
+    -npm run test
+'
+check_output "Edit introducing a softened step in a Makefile is blocked" 2 "|| true" \
+  ci Edit /r/Makefile '	cd web && npm run test || true' '	cd web && npm run test'
+check_output "a second softened step over an existing Justfile is blocked" 2 "|| true" \
+  ci Write "$CI/Justfile" 'test:
+    npm run test || true
+    npm run lint || true
+'
+
+echo "ci hook: task runners, allows"
+check "a cleanup || true in a Makefile passes, it softens no gate" 0 \
+  ci Write /r/Makefile 'clean:
+	-rm -rf build || true
+'
+check "a gate that fails again with || exit 1 passes in a Justfile" 0 \
+  ci Write /r/Justfile 'test:
+    npm run test || exit 1
+'
+check "a gate with no || passes in a Makefile" 0 \
+  ci Write /r/Makefile 'test:
+	cargo test --workspace
+'
+check "a file that only resembles a task runner is not guarded" 0 \
+  ci Write /r/Justfile.bak 'test:
+    npm run test || true
+'
+check "package.json without a softened script passes" 0 \
+  ci Write /r/package.json '{"scripts": {"test": "vitest run"}}'
+check "a commented-out soft fail in a Makefile passes" 0 \
+  ci Write /r/Makefile '# cargo test || true
+test:
+	cargo test
+'
+check "Write rewriting a Justfile that already had it passes (nothing introduced)" 0 \
+  ci Write "$CI/Justfile" 'test:
+    npm run test || true
+'
+check "a YAML pipeline softening make test is still not a Prumo gate" 0 \
+  ci Write /r/.gitlab-ci.yml 'test:
+  script:
+    - make lint || true
+'
+
 echo "ci hook: fails closed"
 check_output "malformed JSON blocks" 2 "cannot read" hook ci_soft_fail.py '{"tool_name":"Write"'
 check_output "Write of .gitlab-ci.yml without content blocks" 2 "cannot read" \

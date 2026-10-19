@@ -393,7 +393,7 @@ cannot read (bad JSON, missing fields, unparsable command) blocks rather than al
 |---|---|---|
 | `no_em_dash.py` | Write, Edit, MultiEdit | new text containing U+2014 |
 | `protected_push.py` | Bash | `git push` updating main, master, develop or any `release/*` branch: explicit refspec (`main`, `+main`, `HEAD:main`, `:main`, `--delete main`, wildcards), `--all`/`--mirror`, or no refspec while the current branch or its upstream is protected. A glob entry is matched with fnmatch, a literal entry exactly, and a wildcard refspec that cannot be proved to miss a protected glob is refused |
-| `ci_soft_fail.py` | Write, Edit, MultiEdit | `.gitlab-ci.yml`, `*.gitlab-ci.yml`, `.github/workflows/*.yml`, `bitbucket-pipelines.yml` or any `Jenkinsfile` gaining `allow_failure: true`, `continue-on-error: true` (or `${{ }}`), `catchError` without `buildResult: FAILURE`, `unstable()`, a `currentBuild.result` that is not a failure, a `returnStatus: true` whose variable nothing reads, or a Prumo gate followed by `\|\|` (`\|\| exit 1` excepted, cleanup lines excepted) |
+| `ci_soft_fail.py` | Write, Edit, MultiEdit | `.gitlab-ci.yml`, `*.gitlab-ci.yml`, `.github/workflows/*.yml`, `bitbucket-pipelines.yml`, any `Jenkinsfile`, `Justfile`, `justfile`, `Makefile`, `makefile`, `Taskfile.yml`, `Taskfile.yaml` or `package.json` gaining `allow_failure: true`, `continue-on-error: true` (or `${{ }}`), `catchError` without `buildResult: FAILURE`, `unstable()`, a `currentBuild.result` that is not a failure, a `returnStatus: true` whose variable nothing reads, a Prumo gate followed by `\|\|` (`\|\| exit 1` excepted, cleanup lines excepted), or, in a task runner, a gate command followed by `\|\|` or a gate command carrying the make/just `-` ignore prefix |
 
 `PRUMO_PROTECTED_BRANCHES="main,release/*"` replaces the protected list (empty keeps the
 default). An entry containing `*`, `?` or `[` is a glob; anything else is an exact branch name,
@@ -430,6 +430,10 @@ merges through `gh`/`glab` or the web UI. The CI hook does not see files written
 (`sed -i`, `echo >>`). Branch protection on the server stays the real gate; these hooks stop the
 agent earlier. The CI hook reads Groovy as text, not as a parse tree: a `catchError` assembled
 from strings, or a soft failure inside a shared library the `Jenkinsfile` calls, is not seen.
+Task runners are read as text too, and the gate set there is a list of test and lint runners
+(`cargo test`, `cargo clippy`, `npm run lint`, `pytest`, `vitest`, `just ci`, the pack's own
+gates, and the like), so a softened step that invokes none of them is not counted; widening the
+list is a one-line change in `TASK_GATE`.
 
 **Scope:** installing the plugin protects one user's machine. To gate every session opened in a
 repository, let `prumo-init` register the same hooks in that repository's `.claude/settings.json`

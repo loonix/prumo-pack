@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """PreToolUse on Write|Edit|MultiEdit of CI files: block new soft failures.
 
-Guarded files: `.gitlab-ci.yml` (and included `*.gitlab-ci.yml`),
-`.github/workflows/*.yml|*.yaml`, `bitbucket-pipelines.yml`, and any
-`Jenkinsfile`, with or without a `.suffix`, at the root or under `pipelines/`.
-A shared library file such as `vars/build.groovy` is not a pipeline and is not
-guarded.
+Guarded files, two kinds:
+
+- pipelines: `.gitlab-ci.yml` (and included `*.gitlab-ci.yml`),
+  `.github/workflows/*.yml|*.yaml`, `bitbucket-pipelines.yml`, and any
+  `Jenkinsfile`, with or without a `.suffix`, at the root or under `pipelines/`.
+  A shared library file such as `vars/build.groovy` is not a pipeline and is not
+  guarded.
+- task runners: `Justfile`, `justfile`, `Makefile`, `makefile`, `Taskfile.yml`,
+  `Taskfile.yaml` and `package.json`. This is where a local CI mirror lives, and
+  a gate softened there hides from the same reader for the same reason.
 
 What counts as a soft failure:
 - YAML: `allow_failure: true` (also yes/on, quoted or not) or
@@ -19,13 +24,21 @@ What counts as a soft failure:
   and dropped.
 - Any of them: a Prumo gate followed by `||`, which replaces its exit code
   with whatever follows. `|| exit 1` is not blocked, it fails again.
+- Task runners: a gate command (`cargo test`, `cargo clippy`, `npm run lint`,
+  `make test`, `just ci`, `pytest`, `vitest`, the pack's own gates, ...)
+  followed by `||`, and the make/just `-` recipe prefix on a gate command,
+  which is the same soft failure spelled natively. The gate set is a list of
+  test and lint runners, not every command, so `rm -rf build || true` stays
+  allowed in a recipe for the same reason it is allowed in a pipeline.
 
 `rm -rf build || true` is not blocked either, and that is the point: cleanup
 that may legitimately find nothing to clean is not a gate, and a blanket
 `|| true` rule would refuse ordinary pipeline edits. A gate that blocks the
 work gets switched off, and then it guards nothing.
 
-Comments do not count: `#` in YAML, `//` and `/* */` in Groovy.
+Comments do not count: `#` in YAML, Makefile, Justfile and Taskfile, `//` and
+`/* */` in Groovy. `package.json` is JSON, which has no comments, so none are
+stripped there.
 
 "Introducing" is counted, not guessed: the new text must not have more soft
 failures than the text it replaces (old_string for Edit, the file on disk for
@@ -46,7 +59,35 @@ END = r"""["']?(?=\s*(?:[,}\]]|$))"""
 # The gates the pack ships, under the names a pipeline invokes them by.
 GATE = (r"(?:prumo-trace|prumo-vendor-verify|prumo-certify"
         r"|fail-closed\.sh|metabolic\.sh|anti-leak\.sh)")
+# The gate runners a task recipe invokes. Kept to test and lint steps: a build
+# step that is softened is a defect too, but it is not this one, and a wider
+# list would refuse recipes that legitimately tolerate a missing tool.
+TASK_GATE = (
+    r"(?:cargo\s+(?:test|clippy|check)"
+    r"|npm\s+(?:run\s+)?(?:test|lint|check)"
+    r"|npx\s+(?:vitest|jest|tsc|eslint)"
+    r"|pnpm\s+(?:run\s+)?(?:test|lint|check)"
+    r"|yarn\s+(?:run\s+)?(?:test|lint|check)"
+    r"|pytest|tox|nox|rspec|phpunit|vitest|jest|eslint|ruff|mypy|tsc"
+    r"|go\s+(?:test|vet)"
+    r"|dotnet\s+test"
+    r"|(?:mvn|\./mvnw|gradle|\./gradlew)\s+\S+"
+    r"|make\s+(?:test|lint|check)"
+    r"|just\s+(?:test|lint|check|ci)"
+    r"|" + GATE + r")"
+)
+# `||` that replaces the exit code, except `|| exit 1` and `|| exit $?`, which
+# fail again.
+SOFTENED = r"[^\n]*?\|\|\s*(?!\s*exit\s+(?:[1-9]|\$))"
 JENKINSFILE = re.compile(r"^Jenkinsfile(?:\..+)?$")
+TASK_RUNNER = re.compile(
+    r"^(?:Justfile|justfile|Makefile|makefile|Taskfile\.ya?ml|package\.json)$")
+
+# Patterns are scoped by file kind: a pipeline file has no recipes, and a
+# Makefile has no YAML keys, so a pattern only runs where it can mean something.
+PIPELINE = frozenset({"pipeline"})
+TASK = frozenset({"task"})
+BOTH = frozenset({"pipeline", "task"})
 
 RETURN_ANY = re.compile(r"returnStatus\s*:\s*true", re.I)
 RETURN_ASSIGN = re.compile(
@@ -79,26 +120,38 @@ def unchecked_return_status(text):
 
 PATTERNS = [
     ("allow_failure: true", rx_counter(
-        r"(?<![\w-])allow_failure\s*:\s*[\"']?(?:true|yes|on)" + END, re.I | re.M)),
+        r"(?<![\w-])allow_failure\s*:\s*[\"']?(?:true|yes|on)" + END, re.I | re.M),
+     PIPELINE),
     ("continue-on-error: true", rx_counter(
         r"(?<![\w-])continue-on-error\s*:\s*(?:[\"']?(?:true|yes|on)" + END +
-        r"|[\"']?\$\{\{)", re.I | re.M)),
+        r"|[\"']?\$\{\{)", re.I | re.M), PIPELINE),
     ("catchError without buildResult: FAILURE", rx_counter(
-        r"catchError\s*(?!\(\s*buildResult\s*:\s*[\"']?FAILURE)", re.I)),
+        r"catchError\s*(?!\(\s*buildResult\s*:\s*[\"']?FAILURE)", re.I), PIPELINE),
     ("unstable(...) instead of a failure", rx_counter(
-        r"(?<![\w.])unstable\s*\(", re.I)),
+        r"(?<![\w.])unstable\s*\(", re.I), PIPELINE),
     ("currentBuild.result set to something that is not a failure", rx_counter(
         r"currentBuild\s*\.\s*(?:result\s*=|setResult\s*\()\s*[\"']?"
-        r"(?:UNSTABLE|SUCCESS|NOT_BUILT|ABORTED)", re.I)),
-    ("unchecked returnStatus: true", unchecked_return_status),
+        r"(?:UNSTABLE|SUCCESS|NOT_BUILT|ABORTED)", re.I), PIPELINE),
+    ("unchecked returnStatus: true", unchecked_return_status, PIPELINE),
     ("a Prumo gate softened with || true", rx_counter(
-        GATE + r"[^\n]*?\|\|\s*(?!\s*exit\s+(?:[1-9]|\$))", re.I)),
+        GATE + SOFTENED, re.I), BOTH),
+    ("a gate command softened with || true", rx_counter(
+        TASK_GATE + SOFTENED, re.I), TASK),
+    ("a recipe line that ignores a gate with the '-' prefix", rx_counter(
+        r"(?m)^[ \t]+-[ \t]*(?:" + TASK_GATE + r")", re.I), TASK),
 ]
+
+
+def kind(path):
+    name = os.path.basename(path.replace("\\", "/"))
+    return "task" if TASK_RUNNER.match(name) else "pipeline"
 
 
 def guarded(path):
     norm = path.replace("\\", "/")
     name = os.path.basename(norm)
+    if TASK_RUNNER.match(name):
+        return True
     if name == ".gitlab-ci.yml" or name.endswith(".gitlab-ci.yml"):
         return True
     if name == "bitbucket-pipelines.yml" or JENKINSFILE.match(name):
@@ -113,9 +166,16 @@ def guarded(path):
 
 
 def language(path):
-    """Comments are stripped per language: `#` in YAML, `//` and `/* */` in Groovy."""
+    """Comments are stripped per language: `#` in YAML and recipe files, `//`
+    and `/* */` in Groovy, nothing in JSON, which has no comments."""
     name = os.path.basename(path.replace("\\", "/"))
-    return "groovy" if JENKINSFILE.match(name) else "yaml"
+    if JENKINSFILE.match(name):
+        return "groovy"
+    if name == "package.json":
+        return "json"
+    if TASK_RUNNER.match(name):
+        return "make"
+    return "yaml"
 
 
 BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
@@ -124,6 +184,8 @@ HASH_COMMENT = re.compile(r"(^|\s)#.*$")
 
 
 def strip_comments(text, lang):
+    if lang == "json":
+        return text or ""
     lines = (text or "").splitlines()
     if lang != "groovy":
         return "\n".join(HASH_COMMENT.sub(r"\1", line) for line in lines)
@@ -137,9 +199,10 @@ def strip_comments(text, lang):
     return "\n".join(out)
 
 
-def count(text, lang):
+def count(text, lang, kind_name):
     text = strip_comments(text, lang)
-    return {label: counter(text) for label, counter in PATTERNS}
+    return {label: counter(text) for label, counter, kinds in PATTERNS
+            if kind_name in kinds}
 
 
 def main():
@@ -153,9 +216,11 @@ def main():
     if not guarded(path):
         return 0
     lang = language(path)
+    kind_name = kind(path)
+    labels = [label for label, _, kinds in PATTERNS if kind_name in kinds]
 
-    before = {label: 0 for label, _ in PATTERNS}
-    after = {label: 0 for label, _ in PATTERNS}
+    before = {label: 0 for label in labels}
+    after = {label: 0 for label in labels}
     for old, new in pairs:
         if old is None:  # Write replaces the whole file on disk.
             try:
@@ -163,12 +228,12 @@ def main():
                     old = fh.read()
             except (OSError, UnicodeDecodeError):
                 old = ""
-        for label, n in count(old, lang).items():
+        for label, n in count(old, lang, kind_name).items():
             before[label] += n
-        for label, n in count(new, lang).items():
+        for label, n in count(new, lang, kind_name).items():
             after[label] += n
 
-    for label, _ in PATTERNS:
+    for label in labels:
         if after[label] > before[label]:
             block(
                 "%s introduces `%s` (%d before, %d after). A failing job must fail the "
