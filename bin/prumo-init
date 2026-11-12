@@ -82,7 +82,7 @@ JENKINS_TEMPLATE="templates/ci/jenkins/prumo-vendored.groovy"
 VENDORED_TEMPLATES="templates/ci/gitlab/prumo-vendored.yml $JENKINS_TEMPLATE"
 # Everything a vendored pipeline runs. ci/gitlab.yml comes from
 # templates/ci/gitlab/prumo-vendored.yml, ci/jenkins.groovy from $JENKINS_TEMPLATE.
-VENDOR_FILES="bin/prumo-trace bin/prumo-vendor-verify lib/prumo_trace.py checks/fail-closed.sh checks/metabolic.sh checks/anti-leak.sh"
+VENDOR_FILES="bin/prumo-trace bin/prumo-verify bin/prumo-vendor-verify lib/prumo_trace.py lib/prumo_verify.py checks/fail-closed.sh checks/metabolic.sh checks/anti-leak.sh"
 # The plugin's PreToolUse hooks, vendored by directory glob so a new hook needs
 # no edit here. What gets registered comes from the plugin's own hooks.json
 # (lib/prumo_agent_hooks.py), so the two cannot drift.

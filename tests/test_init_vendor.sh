@@ -53,7 +53,7 @@ echo "GitLab, vendored by default"
 D="$(repo gitlab)"
 check_output "default source is vendor" 0 "created $V/MANIFEST" "$I" "$D"
 check "the vendored MANIFEST verifies" 0 "$D/$V/bin/prumo-vendor-verify"
-for f in bin/prumo-trace bin/prumo-vendor-verify lib/prumo_trace.py checks/fail-closed.sh checks/metabolic.sh checks/anti-leak.sh; do
+for f in bin/prumo-trace bin/prumo-verify bin/prumo-vendor-verify lib/prumo_trace.py lib/prumo_verify.py checks/fail-closed.sh checks/metabolic.sh checks/anti-leak.sh; do
   check "$f vendored byte for byte" 0 same_bytes "$f" "$D/$V/$f"
 done
 check "GitLab job file vendored byte for byte" 0 same_bytes templates/ci/gitlab/prumo-vendored.yml "$D/$V/ci/gitlab.yml"
