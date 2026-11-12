@@ -162,6 +162,31 @@ jenkins_files() {
   done | LC_ALL=C sort
 }
 
+# homegrown_trace_gates <repo>: the repository-relative paths of scripts that
+# look like a trace gate someone wrote instead of prumo-trace, sorted. A
+# candidate has "prumo" in its name, is a script (by extension or by the
+# executable bit), scans for the PRUMO: tag and never runs prumo-trace. Test
+# files are skipped, since a tagged test also carries PRUMO:, and so are the
+# directories prumo-trace itself ignores. A heuristic, so it only warns: a gate
+# named otherwise goes unseen, and the README says so.
+homegrown_trace_gates() {
+  local r="$1" f base
+  find "$r" \( -name .git -o -name target -o -name node_modules -o -name .prumo -o -name docs \
+    -o -name .claude -o -name vendor -o -name dist -o -name build -o -name .venv -o -name venv \
+    -o -name __pycache__ -o -name .dart_tool \) -prune -o -type f -iname '*prumo*' -print 2>/dev/null |
+    while IFS= read -r f; do
+      base="$(basename "$f")"
+      case "$base" in
+        test_* | *_test.* | *.test.* | *.spec.* | *_spec.*) continue ;;
+        *.py | *.sh | *.bash | *.js | *.mjs | *.cjs | *.ts | *.rb | *.pl) ;;
+        *) [ -x "$f" ] || continue ;;
+      esac
+      grep -qF 'PRUMO:' "$f" 2>/dev/null || continue
+      if grep -qE 'prumo-trace|prumo_trace' "$f" 2>/dev/null; then continue; fi
+      printf '%s\n' "${f#"$r"/}"
+    done | LC_ALL=C sort
+}
+
 wire_gitlab=0
 wire_github=0
 wire_jenkins=0
@@ -320,6 +345,9 @@ if [ "$source" = vendor ] && [ "$agent_hooks" = 1 ]; then
   python3 "$PACK/lib/prumo_agent_hooks.py" check "$repo" "$VENDOR" || exit 1
   agent_hooks_action="install"
 fi
+
+# Looked for before any write, so nothing this run creates is mistaken for one.
+homegrown="$(homegrown_trace_gates "$repo")"
 
 created=0
 updated=0
@@ -516,6 +544,18 @@ if [ "$source" = remote ] && [ "$agent_hooks" = 1 ]; then
 fi
 if [ "$bitbucket_action" = create ]; then
   echo "next: $BITBUCKET_FILE runs the gates on every branch; deployment steps must come after them."
+fi
+# Not a refusal: the file is someone's code and may do more than trace. But a
+# second trace gate next to prumo-trace is how a weaker one stays in charge, so
+# it is named, with the criterion it has to meet.
+if [ -n "$homegrown" ]; then
+  while IFS= read -r g; do
+    echo "prumo-init: WARNING, homegrown trace gate: $g" >&2
+  done <<<"$homegrown"
+  echo "      prumo-trace (vendored in $VENDOR/bin/) already checks PRUMO: tags against" >&2
+  echo "      .prumo/regression-rules/, and it fails closed: a rules file with no invariants is" >&2
+  echo "      an error, never OK. Run your gate on an empty repository; if it says OK there," >&2
+  echo "      it checked nothing. Replace it with prumo-trace, or make it call prumo-trace." >&2
 fi
 if [ "$created" -gt 0 ]; then
   echo "next: prumo-trace fails until a test is tagged with the id CORE-01 (or the rule is replaced),"
