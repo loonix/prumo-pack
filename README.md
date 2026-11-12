@@ -221,6 +221,15 @@ or revoked), and `checks/metabolic.sh` fails until `.prumo/subsystems.yml` decla
 for every directory under its roots. Both failures are intended: the pack does not know the
 repository's invariants or subsystems, and an empty declaration must not pass.
 
+**Already have a trace gate? Do not write another.** Init looks for one before it writes and
+warns, on stderr, for each script that has `prumo` in its name, scans for `PRUMO:` and never
+calls `prumo-trace`. It is a warning and not a refusal: the file is the repository's code, and
+it is left byte for byte. The test it has to pass is the one in #6: run it on a repository with
+no rules and no tags. If it says OK there, it checked nothing; `prumo-trace` calls that an
+error. Replace it with `prumo-trace`, or make it call `prumo-trace`. The search is a heuristic:
+a gate named without `prumo`, or living under `docs/`, `vendor/` or a build directory, goes
+unseen, and test files are skipped because a tagged test also carries `PRUMO:`.
+
 **Limit:** the GitLab edit is line based. It extends only a top level block list `include:`,
 and it takes any mention of `templates/ci/gitlab/prumo.yml` in the file as "already wired".
 Jenkins wiring is a printed snippet, so the gate exists only once someone pastes it, and a

@@ -224,4 +224,37 @@ check "that refusal writes nothing" 0 no_prumo "$D"
 check_output "--force-ci github still creates the workflow" 0 "created .github/workflows/prumo.yml" \
   "$I" --force-ci github "$D"
 
+echo "a homegrown trace gate is reported, not replaced (#6)"
+HOMEGROWN="homegrown trace gate"
+# no_homegrown <repo>: init succeeds and does not report a homegrown gate.
+no_homegrown() {
+  local out
+  out="$("$I" "$1" 2>&1)" || { echo "init exited $?"; echo "$out"; return 1; }
+  if printf '%s' "$out" | grep -qF "$HOMEGROWN"; then
+    echo "reported a homegrown gate where there is none"; echo "$out"; return 1
+  fi
+}
+# The case from the issue: a consumer's own trace gate, which said OK on an
+# empty repository, sat next to prumo-trace without anyone learning of it.
+D="$(repo github)"
+mkdir -p "$D/scripts"
+printf 'import re\nTAG = re.compile(r"PRUMO:\\s*(\\S+)")\nprint("OK")\n' >"$D/scripts/prumo_gate.py"
+check_output "a script named prumo that scans for PRUMO: tags is reported" 0 \
+  "$HOMEGROWN: scripts/prumo_gate.py" "$I" "$D"
+check "the warning is not a refusal, the scaffold is complete" 0 scaffold_complete "$D"
+check "the homegrown gate is left byte for byte" 0 grep -qF 'print("OK")' "$D/scripts/prumo_gate.py"
+D="$(repo github)"
+mkdir -p "$D/scripts"
+printf '#!/bin/sh\n# PRUMO: tags are checked by the pack\nexec .prumo/vendor/bin/prumo-trace --root .\n' \
+  >"$D/scripts/prumo-gate.sh"
+check "a wrapper that runs prumo-trace is not reported" 0 no_homegrown "$D"
+D="$(repo github)"
+mkdir -p "$D/tests"
+printf '# PRUMO: CORE-01\ndef test_core():\n    assert True\n' >"$D/tests/test_prumo_core.py"
+check "a tagged test whose name says prumo is not reported" 0 no_homegrown "$D"
+D="$(repo github)"
+mkdir -p "$D/node_modules/x"
+printf 'const t = /PRUMO:/;\n' >"$D/node_modules/x/prumo-gate.js"
+check "a dependency under node_modules is not reported" 0 no_homegrown "$D"
+
 finish
