@@ -16,6 +16,7 @@ The paradigm itself, in full (chapters 1 to 9, English): [docs/whitepaper.md](do
 | Piece | Status |
 |---|---|
 | `bin/prumo-trace` | Works, 31 tests |
+| `bin/prumo-verify` (ACTIVE invariants against the runner's PASS) | Works, 27 tests |
 | `checks/fail-closed.sh` | Works, 12 tests |
 | `checks/metabolic.sh` | Works, 19 tests |
 | `checks/anti-leak.sh` | Works, 14 tests |
@@ -71,7 +72,46 @@ bin/prumo-trace --root /path/to/repo
 Exits 0 when compliant, 1 on a violation, 2 on a usage error.
 
 **Limit:** a tag proves that a test points at the rule, not that the test passes or that it
-bites. That is the job of the test runner and of mutation testing.
+bites. `prumo-verify` closes the first half; the second is mutation testing.
+
+## prumo-verify
+
+prumo-trace accepts a tag on a test that is ignored, skipped or red. The whitepaper (§2.1) says
+an id in a comment is not verification and only the empirical PASS counts. `prumo-verify` reads
+what the test runner reported and requires, for every ACTIVE invariant:
+
+- at least one test bound to it;
+- every bound test present in the results;
+- every matching result passed. Failed fails; skipped or ignored did not run, and proves nothing.
+
+A `PRUMO: <id>` tag binds to the test declared on the same line or on the first line after it
+that is not blank, a comment, an attribute or a decorator: Rust `fn`, Python `def`, Go
+`func Test...`, JS/TS `it("...")` / `test("...")`, bats `@test "..."`. So the tag that
+prumo-trace already counts is the one prumo-verify follows, and no test needs renaming. A test
+whose reported name carries the id as a whole token (`test_sec_01_x`) is bound too, which is
+the whitepaper's form. A tag that sits on no test (in CI, in a script) binds to nothing, and an
+invariant with only those fails here even though prumo-trace passes it.
+
+```sh
+cargo test -- -Z unstable-options --format json > results.json   # libtest JSON (nightly or RUSTC_BOOTSTRAP=1)
+pytest --junitxml=results.xml                                        # or nextest, vitest, jest: JUnit XML
+go test -json ./... > results.json
+bin/prumo-verify --root . --results results.json [--results more.xml]
+```
+
+Several `--results` files are one run. Results with no test case, or no ACTIVE invariant, are a
+refusal: a checker that saw nothing does not get to say OK. A file in no known format is a usage
+error. Exits 0 when compliant, 1 on a violation, 2 on a usage error. The CI templates do not run
+it, because only the repository knows its test command: add a step after the tests that feeds
+their output to `.prumo/vendor/bin/prumo-verify`.
+
+**Limits:** a PASS proves the test ran green, not that it bites (mutation testing, not built).
+Binding is by declaration line, not by parsing the language: a tag above a helper function binds
+to the helper, and a tag inside a test body binds to nothing. A function name shared by two
+modules binds to both, and both must pass, which is strict on purpose. Java and Kotlin
+declarations are not recognised yet; name the test with the id there. A test that is a whole script
+(`tests/x.test.sh` run by CI) is not a named test case in any runner output, so its tag binds
+to nothing until the script emits JUnit or its CI step is named with the id.
 
 ## checks/fail-closed.sh
 
