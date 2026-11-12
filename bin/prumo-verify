@@ -1,0 +1,4 @@
+#!/bin/sh
+# Prumo verification against the test runner. See lib/prumo_verify.py.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+exec python3 "$HERE/../lib/prumo_verify.py" "$@"
